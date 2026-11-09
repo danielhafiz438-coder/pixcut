@@ -1,42 +1,39 @@
 <!DOCTYPE html>
-<html lang="ms">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PixCut — Naik taraf imej &amp; buang latar</title>
-<meta name="description" content="Naik taraf resolusi imej 2x/4x dan buang latar belakang — semuanya diproses dalam pelayar anda. Tiada muat naik ke pelayan.">
-<meta name="theme-color" content="#ffffff">
-<meta property="og:title" content="PixCut — Naik taraf imej &amp; buang latar">
-<meta property="og:description" content="Upscale 2x/4x dan remove background, 100% dalam pelayar.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234d90fe'/%3E%3Cpath d='M9 22l4.5-9 4 7 3-4 4 6z' fill='white'/%3E%3Ccircle cx='11' cy='11' r='2.2' fill='white'/%3E%3C/svg%3E">
+<title>PixCut — Upscale images &amp; remove backgrounds</title>
+<meta name="description" content="Increase image resolution 2x/4x and cut out backgrounds — everything runs in your browser. No uploads.">
+<meta name="theme-color" content="#eef1f8">
+<meta property="og:title" content="PixCut — Upscale images &amp; remove backgrounds">
+<meta property="og:description" content="Super-resolution and background removal, 100% on-device.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230a84ff'/%3E%3Cpath d='M9 22l4.5-9 4 7 3-4 4 6z' fill='white'/%3E%3Ccircle cx='11' cy='11' r='2.2' fill='white'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://esm.sh">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 
+<div class="aurora" aria-hidden="true"></div>
+
 <header class="topbar">
-  <div class="topbar-inner">
+  <div class="topbar-inner glass">
     <a class="brand" href="./">
-      <svg class="mark" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
-        <rect width="32" height="32" rx="7" fill="#4d90fe"/>
+      <svg class="mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+        <rect width="32" height="32" rx="9" fill="#0a84ff"/>
         <path d="M8 23l5.5-11 4.4 7.6 3.2-4.4L26 23z" fill="#fff"/>
         <circle cx="11" cy="10.5" r="2.3" fill="#fff"/>
       </svg>
-      <span class="brand-name">Pix<span class="brand-accent">Cut</span></span>
+      <span class="brand-name">PixCut</span>
     </a>
 
-    <nav class="topnav" aria-label="Alat">
-      <button class="navitem is-active" data-tab="upscale" type="button">Naik taraf imej</button>
-      <button class="navitem" data-tab="bg" type="button">Buang latar</button>
-      <a class="navitem navitem-link" href="#faq">Soalan</a>
+    <nav class="topnav" aria-label="Tools">
+      <button class="navitem is-active" data-tab="upscale" type="button">Upscale</button>
+      <button class="navitem" data-tab="bg" type="button">Remove background</button>
     </nav>
 
     <div class="topbar-right">
       <a id="repoLink" class="navitem navitem-link" href="https://github.com/danielhafiz438-coder/pixcut" target="_blank" rel="noopener">GitHub</a>
-      <a class="signup" href="#tool">Mula</a>
-      <span class="grid" aria-hidden="true">
-        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-      </span>
     </div>
   </div>
 </header>
@@ -44,40 +41,43 @@
 <main id="tool">
 
   <section class="hero">
-    <span class="pill">Percuma</span>
-    <h1 id="heroTitle">Naik taraf imej</h1>
-    <p class="hero-sub" id="heroSub">Naikkan resolusi imej anda sehingga 4× — dengan enjin AI super-res atau Lanczos, terus dalam pelayar.</p>
+    <h1 id="heroTitle">Upscale image</h1>
+    <p class="hero-sub" id="heroSub">Increase resolution up to 4× with a local AI model or Lanczos resampling, right in your browser.</p>
 
     <div class="uploader" id="uploaderUpscale">
-      <div class="dropzone" id="dzUpscale" tabindex="0" role="button" aria-label="Pilih imej untuk dinaik taraf">
-        <span class="cta">Pilih imej</span>
-        <p class="drop-hint">atau lepas imej di sini</p>
-        <input type="file" id="inputUpscale" accept="image/*" multiple hidden>
+      <div class="uploader-row">
+        <div class="dropzone" id="dzUpscale" tabindex="0" role="button" aria-label="Choose an image to upscale">
+          <span class="cta">Choose image</span>
+          <input type="file" id="inputUpscale" accept="image/*" multiple hidden>
+        </div>
+        <div class="side-actions">
+          <button type="button" class="circle" id="pickUpscale" aria-label="Choose a file" title="Choose a file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5m0 0L7.5 9.5M12 5l4.5 4.5"/><path d="M5 15v3a1 1 0 001 1h12a1 1 0 001-1v-3"/></svg>
+          </button>
+          <button type="button" class="circle" id="pasteUpscale" aria-label="Paste from clipboard" title="Paste from clipboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="8" height="4" rx="1"/><path d="M8 6H6a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V7a1 1 0 00-1-1h-2"/></svg>
+          </button>
+        </div>
       </div>
-      <div class="side-actions">
-        <button type="button" class="circle" id="pickUpscale" aria-label="Pilih fail dari peranti" title="Pilih fail">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5m0 0L7.5 9.5M12 5l4.5 4.5"/><path d="M5 15v3a1 1 0 001 1h12a1 1 0 001-1v-3"/></svg>
-        </button>
-        <button type="button" class="circle" id="pasteUpscale" aria-label="Tampal imej dari papan klip" title="Tampal dari papan klip">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="8" height="4" rx="1"/><path d="M8 6H6a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V7a1 1 0 00-1-1h-2"/></svg>
-        </button>
-      </div>
+      <p class="drop-hint">or drop an image here</p>
     </div>
 
     <div class="uploader" id="uploaderBg" hidden>
-      <div class="dropzone" id="dzBg" tabindex="0" role="button" aria-label="Pilih imej untuk dibuang latar">
-        <span class="cta">Pilih imej</span>
-        <p class="drop-hint">atau lepas imej di sini</p>
-        <input type="file" id="inputBg" accept="image/*" hidden>
+      <div class="uploader-row">
+        <div class="dropzone" id="dzBg" tabindex="0" role="button" aria-label="Choose an image to remove the background from">
+          <span class="cta">Choose image</span>
+          <input type="file" id="inputBg" accept="image/*" hidden>
+        </div>
+        <div class="side-actions">
+          <button type="button" class="circle" id="pickBg" aria-label="Choose a file" title="Choose a file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5m0 0L7.5 9.5M12 5l4.5 4.5"/><path d="M5 15v3a1 1 0 001 1h12a1 1 0 001-1v-3"/></svg>
+          </button>
+          <button type="button" class="circle" id="pasteBg" aria-label="Paste from clipboard" title="Paste from clipboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="8" height="4" rx="1"/><path d="M8 6H6a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V7a1 1 0 00-1-1h-2"/></svg>
+          </button>
+        </div>
       </div>
-      <div class="side-actions">
-        <button type="button" class="circle" id="pickBg" aria-label="Pilih fail dari peranti" title="Pilih fail">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5m0 0L7.5 9.5M12 5l4.5 4.5"/><path d="M5 15v3a1 1 0 001 1h12a1 1 0 001-1v-3"/></svg>
-        </button>
-        <button type="button" class="circle" id="pasteBg" aria-label="Tampal imej dari papan klip" title="Tampal dari papan klip">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="8" height="4" rx="1"/><path d="M8 6H6a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V7a1 1 0 00-1-1h-2"/></svg>
-        </button>
-      </div>
+      <p class="drop-hint">or drop an image here</p>
     </div>
   </section>
 
@@ -85,101 +85,92 @@
 
     <!-- ============ UPSCALE ============ -->
     <section class="tool-panel is-active" id="panel-upscale" role="tabpanel">
-      <div class="options" id="upscaleControls" hidden>
-        <h2 class="options-title">Pilihan naik taraf</h2>
+      <div class="options glass" id="upscaleControls" hidden>
+        <h2 class="options-title">Upscale options</h2>
 
         <div class="option-row">
-          <span class="option-label">Enjin</span>
-          <div class="segmented" id="engineSeg" role="group" aria-label="Enjin pembesaran">
+          <span class="option-label">Engine</span>
+          <div class="segmented" id="engineSeg" role="group" aria-label="Upscaling engine">
             <button class="seg is-active" data-engine="lanczos" type="button">Lanczos</button>
             <button class="seg" data-engine="ai" type="button">AI super-res</button>
           </div>
         </div>
 
         <div class="option-row" id="scaleControl">
-          <span class="option-label">Saiz pembesaran</span>
-          <div class="scale-cards" id="scaleSeg" role="group" aria-label="Saiz pembesaran">
+          <span class="option-label">Scale</span>
+          <div class="scale-cards" id="scaleSeg" role="group" aria-label="Scale factor">
             <button class="scale-card is-active" data-scale="2" type="button">2×</button>
             <button class="scale-card" data-scale="4" type="button">4×</button>
           </div>
         </div>
 
         <div class="option-row">
-          <span class="option-label">Ketajaman</span>
+          <span class="option-label">Sharpness</span>
           <div class="range-row">
-            <input type="range" id="sharpen" min="0" max="100" value="35" step="5" aria-label="Ketajaman">
+            <input type="range" id="sharpen" min="0" max="100" value="35" step="5" aria-label="Sharpness">
             <span class="control-value" id="sharpenVal">35</span>
           </div>
         </div>
 
         <div class="actions">
-          <button class="btn-primary" id="btnUpscale" type="button">Naik taraf</button>
-          <button class="btn-quiet" id="btnClearUpscale" type="button">Kosongkan</button>
+          <button class="btn-primary" id="btnUpscale" type="button">Upscale</button>
+          <button class="btn-quiet" id="btnClearUpscale" type="button">Clear</button>
         </div>
       </div>
 
       <ul class="results" id="resultsUpscale"></ul>
 
-      <p class="hint" id="upscaleHint">Guna 2× untuk imej besar, 4× untuk ikon atau imej kecil. Had input 12&nbsp;MP setiap imej.</p>
+      <p class="hint" id="upscaleHint">Use 2× for large images, 4× for icons or small images. Input limit 12&nbsp;MP per image.</p>
     </section>
 
     <!-- ============ BACKGROUND ============ -->
     <section class="tool-panel" id="panel-bg" role="tabpanel" hidden>
-      <div class="options" id="bgControls" hidden>
-        <h2 class="options-title">Pilihan buang latar</h2>
+      <div class="options glass" id="bgControls" hidden>
+        <h2 class="options-title">Background options</h2>
 
         <div class="option-row">
-          <span class="option-label">Mod</span>
-          <div class="segmented" id="modeSeg" role="group" aria-label="Mod buang latar">
-            <button class="seg is-active" data-mode="ai" type="button" title="Model AI (~40 MB, dimuat turun sekali)">AI · kualiti</button>
-            <button class="seg" data-mode="fast" type="button" title="Berdasarkan warna latar">Warna · pantas</button>
+          <span class="option-label">Mode</span>
+          <div class="segmented" id="modeSeg" role="group" aria-label="Removal mode">
+            <button class="seg is-active" data-mode="ai" type="button" title="Segmentation model (~40 MB, downloaded once)">AI · quality</button>
+            <button class="seg" data-mode="fast" type="button" title="Based on background colour">Colour · fast</button>
           </div>
         </div>
 
         <div class="option-row" id="tolWrap" hidden>
-          <span class="option-label">Toleransi</span>
+          <span class="option-label">Tolerance</span>
           <div class="range-row">
-            <input type="range" id="tolerance" min="4" max="60" value="24" step="1" aria-label="Toleransi warna">
+            <input type="range" id="tolerance" min="4" max="60" value="24" step="1" aria-label="Colour tolerance">
             <span class="control-value" id="tolVal">24</span>
           </div>
         </div>
 
         <div class="actions">
-          <button class="btn-primary" id="btnBg" type="button">Buang latar</button>
-          <button class="btn-quiet" id="btnClearBg" type="button">Kosongkan</button>
+          <button class="btn-primary" id="btnBg" type="button">Remove background</button>
+          <button class="btn-quiet" id="btnClearBg" type="button">Clear</button>
         </div>
       </div>
 
-      <div class="bg-stage" id="bgStage" hidden>
+      <div class="bg-stage glass" id="bgStage" hidden>
         <div class="bg-preview">
-          <div class="stage-label">Hasil</div>
-          <div class="checker"><img id="bgPreview" alt="Pratonton hasil" hidden></div>
+          <div class="stage-label">Result</div>
+          <div class="checker"><img id="bgPreview" alt="Background removed result" hidden></div>
           <div class="bg-meta" id="bgMeta"></div>
         </div>
         <div class="bg-side">
           <div class="progress" id="bgProgress" hidden>
             <div class="bar"><i id="bgBar"></i></div>
-            <span id="bgStatus">Menyediakan…</span>
+            <span id="bgStatus">Preparing…</span>
           </div>
-          <button class="btn-primary btn-block" id="btnBgDownload" type="button" hidden>Muat turun PNG</button>
-          <p class="hint" id="bgHint">Mod AI memuat turun model (~40&nbsp;MB) pada penggunaan pertama, kemudian disimpan dalam cache pelayar. Pemprosesan tetap berlaku pada peranti anda.</p>
+          <button class="btn-primary btn-block" id="btnBgDownload" type="button" hidden>Download PNG</button>
+          <p class="hint" id="bgHint">AI mode downloads the model (~40&nbsp;MB) on first use, then the browser caches it. Processing still happens on your device.</p>
         </div>
       </div>
     </section>
   </div>
-
-  <!-- ============ FAQ ============ -->
-  <section class="faq" id="faq">
-    <h2>Soalan lazim</h2>
-    <details><summary>Adakah imej saya dimuat naik ke pelayan?</summary><p>Tidak. Semua pemprosesan berjalan di dalam pelayar menggunakan Canvas, WebAssembly dan WebGL. Tiada API pemprosesan imej dipanggil, dan tiada fail dihantar keluar daripada tab ini.</p></details>
-    <details><summary>Kenapa mod AI perlu muat turun fail besar?</summary><p>Model segmentasi (~40&nbsp;MB) diperlukan untuk memisahkan subjek daripada latar. Ia dimuat turun sekali dari CDN awam dan disimpan dalam cache pelayar, jadi penggunaan seterusnya lebih pantas.</p></details>
-    <details><summary>Bagaimana naik taraf berfungsi?</summary><p>Dua enjin. <b>Lanczos</b> menggunakan resample pica + unsharp mask — pantas dan sesuai untuk imej besar. <b>AI</b> menggunakan model ESRGAN (UpscalerJS) yang menjana butiran baharu pada skala 2×; imej diproses dalam jubin 256 px dengan pertindihan supaya memori terkawal dan tiada garis sambungan.</p></details>
-    <details><summary>Format apa yang disokong?</summary><p>Input: JPG, PNG, WebP, GIF (bingkai pertama), HEIC jika pelayar anda menyokongnya. Output: PNG jika imej ada ketelusan, JPEG 0.92 jika tidak.</p></details>
-  </section>
 </main>
 
 <footer class="footer">
-  <span>© PixCut 2026 ® · Alat imej dalam pelayar</span>
+  <span>© PixCut 2026 ® · On-device image tools</span>
 </footer>
 
 <script type="module" src="assets/app.js"></script>

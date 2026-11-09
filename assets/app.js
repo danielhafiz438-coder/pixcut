@@ -18,12 +18,12 @@ if (repoLink) repoLink.href = REPO_URL;
 
 const HERO = {
   upscale: {
-    title: 'Naik taraf imej',
-    sub: 'Naikkan resolusi imej anda sehingga 4× — dengan enjin AI super-res atau Lanczos, terus dalam pelayar.',
+    title: 'Upscale image',
+    sub: 'Increase resolution up to 4× with a local AI model or Lanczos resampling, right in your browser.',
   },
   bg: {
-    title: 'Buang latar',
-    sub: 'Potong latar belakang JPG dan PNG dengan model segmentasi yang berjalan pada peranti anda.',
+    title: 'Remove background',
+    sub: 'Cut out the subject from JPG and PNG images with a segmentation model that runs on your device.',
   },
 };
 
@@ -73,7 +73,7 @@ function download(blob, filename) {
 
 function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(b => b ? resolve(b) : reject(new Error('Gagal mengekod imej')), type, quality);
+    canvas.toBlob(b => b ? resolve(b) : reject(new Error('Failed to encode image')), type, quality);
   });
 }
 
@@ -166,9 +166,9 @@ function wireSourceButtons(input, pick, paste, onFiles) {
           return;
         }
       }
-      toast('Tiada imej dalam papan klip.');
+      toast('No image found in the clipboard.');
     } catch {
-      toast('Pelayar tidak benarkan baca papan klip — tekan Ctrl+V di halaman ini.');
+      toast('The browser blocked clipboard access — press Ctrl+V on this page instead.');
     }
   });
 }
@@ -195,8 +195,8 @@ $$('#engineSeg .seg').forEach(b => b.addEventListener('click', () => {
   engine = b.dataset.engine;
   $('#scaleControl').hidden = engine === 'ai';
   $('#upscaleHint').innerHTML = engine === 'ai'
-    ? 'AI guna model ESRGAN (~1&nbsp;MB, dimuat turun sekali) yang menambah butiran sebenar, bukan sekadar interpolasi. Output 2×; had input ' + AI_MAX_MP + '&nbsp;MP dan mungkin ambil masa beberapa saat setiap bahagian.'
-    : 'Petua: gunakan 2× untuk imej besar, 4× untuk ikon atau imej kecil. Had input 12&nbsp;MP setiap imej.';
+    ? 'The AI engine uses an ESRGAN model (~1&nbsp;MB, downloaded once) that adds real detail instead of interpolating. Output is 2×; input is limited to ' + AI_MAX_MP + '&nbsp;MP and each tile takes a few seconds.'
+    : 'Use 2× for large images, 4× for icons or small images. Input limit 12&nbsp;MP per image.';
   updateDimLabels();
   queue.forEach(renderRow);
 }));
@@ -260,7 +260,7 @@ async function inspectImage(item) {
   const mp = (bmp.width * bmp.height) / 1e6;
   if (mp > MAX_INPUT_MP) {
     item.status = 'error';
-    item.error = `Terlalu besar (${mp.toFixed(1)} MP, had ${MAX_INPUT_MP} MP)`;
+    item.error = `Too large (${mp.toFixed(1)} MP, limit ${MAX_INPUT_MP} MP)`;
   }
   $(`#row-${item.id} .thumb img`).src = bmpToDataUrl(bmp, 54);
   const meta = $(`#meta-${item.id}`);
@@ -290,16 +290,16 @@ function renderRow(item) {
     return;
   }
   if (item.status === 'working') {
-    if (meta) meta.textContent = item.statusText || 'Memproses…';
-    action.innerHTML = '<span class="spinner" role="status" aria-label="Memproses"></span>';
+    if (meta) meta.textContent = item.statusText || 'Processing…';
+    action.innerHTML = '<span class="spinner" role="status" aria-label="Processing"></span>';
     return;
   }
   if (item.status === 'done') {
     if (meta) {
       meta.innerHTML = dimHtml(item.ow, item.oh, item.w, item.h) +
-        ` · hasil <b>${fmtBytes(item.blob.size)}</b>`;
+        ` · result <b>${fmtBytes(item.blob.size)}</b>`;
     }
-    action.innerHTML = '<button class="btn btn-primary" type="button">Muat turun</button>';
+    action.innerHTML = '<button class="btn btn-primary" type="button">Download</button>';
     $('button', action).addEventListener('click', () => {
       const ext = item.blob.type === 'image/jpeg' ? 'jpg' : 'png';
       download(item.blob, `${baseName(item.file.name)}_${item.scale}x${item.engineTag ? '-' + item.engineTag : ''}.${ext}`);
@@ -312,7 +312,7 @@ function renderRow(item) {
 async function upscaleItem(item) {
   if (item.status === 'error') return;
   item.status = 'working';
-  item.statusText = 'Memproses…';
+  item.statusText = 'Processing…';
   renderRow(item);
   if (engine === 'ai') return upscaleItemAI(item);
   try {
@@ -348,7 +348,7 @@ async function upscaleItem(item) {
     item.status = 'done';
   } catch (err) {
     item.status = 'error';
-    item.error = err.message || 'Gagal';
+    item.error = err.message || 'Failed';
   }
   renderRow(item);
 }
@@ -406,10 +406,10 @@ async function upscaleItemAI(item) {
     const bmp = item.bmp || await loadBitmap(item.file);
     const mp = (bmp.width * bmp.height) / 1e6;
     if (mp > AI_MAX_MP) {
-      throw new Error(`AI terhad ${AI_MAX_MP} MP (imej ini ${mp.toFixed(1)} MP) — guna Lanczos`);
+      throw new Error(`AI is limited to ${AI_MAX_MP} MP (this image is ${mp.toFixed(1)} MP) — use Lanczos`);
     }
 
-    item.statusText = 'Memuatkan model AI…';
+    item.statusText = 'Loading AI model…';
     renderRow(item);
     dbg('getUpscaler start');
     const mod = await getUpscalerModule();
@@ -422,7 +422,7 @@ async function upscaleItemAI(item) {
 
     const hasAlpha = hasTransparency(src);
     const out = await aiUpscaleCanvas(src, mod, (done, total) => {
-      item.statusText = `AI: bahagian ${done}/${total}…`;
+      item.statusText = `AI: tile ${done}/${total}…`;
       renderRow(item);
     });
 
@@ -448,7 +448,7 @@ async function upscaleItemAI(item) {
     item.status = 'done';
   } catch (err) {
     item.status = 'error';
-    item.error = err.message || 'Gagal';
+    item.error = err.message || 'Failed';
   }
   renderRow(item);
 }
@@ -536,13 +536,13 @@ btnUpscale.addEventListener('click', async () => {
   const pending = queue.filter(i => i.status === 'queued' || i.status === 'error' && i.bmp);
   if (!pending.length) return;
   btnUpscale.disabled = true;
-  btnUpscale.textContent = 'Memproses…';
+  btnUpscale.textContent = 'Processing…';
   for (const item of pending) {
     item.status = 'queued';
     await upscaleItem(item);
   }
   btnUpscale.disabled = false;
-  btnUpscale.textContent = 'Naik taraf';
+  btnUpscale.textContent = 'Upscale';
 });
 
 $('#btnClearUpscale').addEventListener('click', () => {
@@ -640,11 +640,11 @@ btnBg.addEventListener('click', async () => {
       : await removeByColor(bgFile);
     bgResult = blob;
     await drawResult(blob);
-    setProgress(100, `Siap dalam ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+    setProgress(100, `Done in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
     btnBgDownload.hidden = false;
   } catch (err) {
     console.error(err);
-    setProgress(0, `Gagal: ${err.message || err}`);
+    setProgress(0, `Failed: ${err.message || err}`);
   } finally {
     btnBg.disabled = false;
   }
@@ -657,7 +657,7 @@ async function drawResult(blob) {
 }
 
 btnBgDownload.addEventListener('click', () => {
-  if (bgResult) download(bgResult, `${baseName(bgFile.name)}_nolatar.png`);
+  if (bgResult) download(bgResult, `${baseName(bgFile.name)}_no-bg.png`);
 });
 
 /* --- mod AI (model segmentasi, jalan dalam browser) --- */
@@ -700,20 +700,20 @@ const mapAiProgress = data => {
   if (data.type === 'status') return setProgress(8, data.text);
   const pct = data.total ? (data.current / data.total) * 100 : 0;
   if (String(data.key).startsWith('fetch')) {
-    setProgress(8 + pct * 0.5, `Memuat turun model ${Math.round(pct)}%`);
+    setProgress(8 + pct * 0.5, `Downloading model ${Math.round(pct)}%`);
   } else {
-    setProgress(60 + pct * 0.38, 'Memproses imej…');
+    setProgress(60 + pct * 0.38, 'Processing image…');
   }
 };
 
 async function removeWithAI(file) {
-  setProgress(4, 'Menyediakan…');
+  setProgress(4, 'Preparing…');
   // Cuba dalam worker dahulu; jika gagal, jalankan di thread utama.
   try {
     return await runInWorker(file, mapAiProgress);
   } catch (err) {
     console.warn('Worker AI gagal, guna thread utama:', err);
-    setProgress(10, 'Memuatkan model…');
+    setProgress(10, 'Loading model…');
     if (!aiModule) aiModule = await import(AI_CDN);
     return aiModule.removeBackground(file, {
       model: 'isnet_fp16',
@@ -819,5 +819,5 @@ document.addEventListener('paste', e => {
   const active = $('.tool-panel.is-active');
   if (active?.id === 'panel-bg') loadBgFile([file]);
   else addFiles([file]);
-  toast('Imej ditampal dari papan klip.');
+  toast('Image pasted from clipboard.');
 });

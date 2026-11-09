@@ -45,9 +45,10 @@ Static hosting, no build step.
 
 ## Technical notes
 
-- Upscale limits: 12 MP input (Lanczos), 1 MP input (AI, because of processing time).
+- Upscale limits: 48 MP input (Lanczos), 12 MP input (AI — about 1–1.5 min per MP).
+- Output limit: 192 MP, and 16384 px on the long side. 2× of a 48 MP photo fits; 4× of one does not.
 - AI engine: ESRGAN 2× model (~1 MB) from a CDN, cached after the first run. Expect roughly
-  60–90 s per 1 MP on a mid-range laptop.
+  60–90 s per 1 MP on a mid-range laptop. A 12 MP photo can take 10–20 minutes; the row shows tile progress.
 - AI mode does not offer 4× directly; run it twice or use Lanczos 4×.
 - Background removal downloads a ~40 MB segmentation model on first use, then the browser caches it.
 - Output: PNG when the image has transparency, JPEG 0.92 otherwise.

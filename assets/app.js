@@ -1,8 +1,9 @@
 import Pica from './pica.min.mjs';
 
 const REPO_URL = 'https://github.com/danielhafiz438-coder/pixcut';
-const MAX_INPUT_MP = 12;          // had input untuk naik taraf
-const MAX_OUTPUT_MP = 64;         // had output selepas pembesaran
+const MAX_INPUT_MP = 48;          // had input untuk naik taraf (Lanczos)
+const MAX_OUTPUT_MP = 192;        // had output — 2× foto 48 MP masih muat
+const MAX_SIDE = 16384;           // sisi maksimum canvas pada GPU ini
 const AI_CDN = 'https://esm.sh/@imgly/background-removal@1.7.0';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -195,8 +196,8 @@ $$('#engineSeg .seg').forEach(b => b.addEventListener('click', () => {
   engine = b.dataset.engine;
   $('#scaleControl').hidden = engine === 'ai';
   $('#upscaleHint').innerHTML = engine === 'ai'
-    ? 'The AI engine uses an ESRGAN model (~1&nbsp;MB, downloaded once) that adds real detail instead of interpolating. Output is 2×; input is limited to ' + AI_MAX_MP + '&nbsp;MP and each tile takes a few seconds.'
-    : 'Use 2× for large images, 4× for icons or small images. Input limit 12&nbsp;MP per image.';
+    ? 'The AI engine uses an ESRGAN model (~1&nbsp;MB, downloaded once) that adds real detail instead of interpolating. Output is 2×. Input limit ' + AI_MAX_MP + '&nbsp;MP — a full photo can take several minutes.'
+    : 'Use 2× for large images, 4× for icons or small images. Input limit ' + MAX_INPUT_MP + '&nbsp;MP per image.';
   updateDimLabels();
   queue.forEach(renderRow);
 }));
@@ -223,7 +224,7 @@ function updateDimLabels() {
 }
 
 function dimHtml(ow, oh, nw, nh) {
-  return `<b>${ow}×${oh}</b> → <b>${nw}×${nh}</b>${nw * nh > 40e6 ? ' · besar' : ''}`;
+  return `<b>${ow}×${oh}</b> → <b>${nw}×${nh}</b>${nw * nh > 40e6 ? ' · large' : ''}`;
 }
 
 let seq = 0;
@@ -319,7 +320,9 @@ async function upscaleItem(item) {
     const bmp = item.bmp || await loadBitmap(item.file);
     const w = Math.round(bmp.width * scale);
     const h = Math.round(bmp.height * scale);
-    if ((w * h) / 1e6 > MAX_OUTPUT_MP) throw new Error(`Output terlalu besar (${w}×${h})`);
+    if (w > MAX_SIDE || h > MAX_SIDE || (w * h) / 1e6 > MAX_OUTPUT_MP) {
+      throw new Error(`Output too large (${w}×${h}). Limit is ${MAX_OUTPUT_MP} MP and ${MAX_SIDE}px a side — use 2× or a smaller image.`);
+    }
 
     const src = document.createElement('canvas');
     src.width = bmp.width;
@@ -357,7 +360,7 @@ async function upscaleItem(item) {
 /*  Enjin AI — Swin? Tidak: ESRGAN melalui UpscalerJS (TFJS/WebGL)     */
 /* ------------------------------------------------------------------ */
 
-const AI_MAX_MP = 1;          // had input untuk mod AI (masa pemprosesan)
+const AI_MAX_MP = 12;         // had input untuk mod AI (masa, bukan memori)
 const AI_TILE = 256;          // saiz jubin input
 const AI_OVERLAP = 32;        // pertindihan antara jubin (elak garis sambung)
 const AI_CDN_SR = 'https://cdn.jsdelivr.net/npm/upscaler@1.0.0/+esm';
@@ -407,6 +410,11 @@ async function upscaleItemAI(item) {
     const mp = (bmp.width * bmp.height) / 1e6;
     if (mp > AI_MAX_MP) {
       throw new Error(`AI is limited to ${AI_MAX_MP} MP (this image is ${mp.toFixed(1)} MP) — use Lanczos`);
+    }
+    const outW = bmp.width * 2;
+    const outH = bmp.height * 2;
+    if (outW > MAX_SIDE || outH > MAX_SIDE || (outW * outH) / 1e6 > MAX_OUTPUT_MP) {
+      throw new Error(`Output too large (${outW}×${outH}). Limit is ${MAX_OUTPUT_MP} MP and ${MAX_SIDE}px a side.`);
     }
 
     item.statusText = 'Loading AI model…';

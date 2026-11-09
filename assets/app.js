@@ -249,7 +249,7 @@ function addFiles(files) {
     inspectImage(item).catch(() => rejected.push(file.name));
   }
   controlsU.hidden = queue.length === 0;
-  if (rejected.length) console.warn('Imej tidak dapat dibaca:', rejected);
+  if (rejected.length) console.warn('Could not read image:', rejected);
 }
 
 async function inspectImage(item) {
@@ -726,7 +726,7 @@ async function removeWithAI(file) {
 /* --- mod warna: flood fill dari tepi --- */
 
 async function removeByColor(file) {
-  setProgress(35, 'Menganalisis latar…');
+  setProgress(35, 'Analysing background…');
   const bmp = await loadBitmap(file);
   const w = bmp.width;
   const h = bmp.height;
@@ -751,7 +751,7 @@ async function removeByColor(file) {
   const br = sr / n, bgc = sg / n, bb = sb / n;
 
   const tol2 = tolerance * tolerance * 3;
-  const mask = new Uint8Array(w * h);      // 1 = latar
+  const mask = new Uint8Array(w * h);      // 1 = background
   const stack = [];
   const push = (x, y) => {
     const p = y * w + x;

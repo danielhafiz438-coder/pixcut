@@ -19,12 +19,16 @@ Tiada backend, tiada API imej, tiada pangkalan data.
 ## Struktur
 
 ```
-index.html            UI (tab, dropzone, hasil)
+index.html            UI: header putih, hero tengah, workarea kelabu (gaya iLoveIMG)
 assets/style.css      Gaya
 assets/app.js         Logik upsample + remove background
 assets/pica.min.mjs   Pica 10.0.3 (MIT) — vendored supaya tiada CDN
 server.mjs            Pelayan statik untuk ujian tempatan
 ```
+
+Susun atur meniru iLoveIMG (header 60px, H1 42/600, butang utama #4d90fe radius 12,
+workarea #f5f5fa) tetapi dengan brand, ikon dan teks sendiri; nav hanya menyenaraikan
+alat yang benar-benar ada.
 
 ## Jalankan tempatan
 

@@ -65,7 +65,7 @@ function canvasToBlob(canvas, type, quality) {
 function hasTransparency(source) {
   const probe = document.createElement('canvas');
   probe.width = probe.height = 96;
-  const ctx = probe.getContext('2d', { willReadFrequently: true });
+  const ctx = probe.getContext('2d');
   ctx.drawImage(source, 0, 0, 96, 96);
   const d = ctx.getImageData(0, 0, 96, 96).data;
   for (let i = 3; i < d.length; i += 4) if (d[i] < 240) return true;
@@ -293,29 +293,42 @@ const AI_TILE = 256;          // saiz jubin input
 const AI_OVERLAP = 32;        // pertindihan antara jubin (elak garis sambung)
 const AI_CDN_SR = 'https://cdn.jsdelivr.net/npm/upscaler@1.0.0/+esm';
 
-let aiUpscalerPromise = null;
+let aiModulePromise = null;
 
-function getUpscaler() {
-  if (!aiUpscalerPromise) {
-    aiUpscalerPromise = import(AI_CDN_SR)
-      .then(mod => {
-        const Upscaler = mod.default || mod.Upscaler || mod;
-        return new Upscaler();
-      })
+/** Import modul UpscalerJS (dimuat turun sekali, disimpan dalam cache pelayar). */
+function getUpscalerModule() {
+  if (!aiModulePromise) {
+    aiModulePromise = import(AI_CDN_SR)
+      .then(mod => mod.default ? mod : (mod.Upscaler ? { default: mod.Upscaler } : mod))
       .catch(err => {
-        aiUpscalerPromise = null;
+        aiModulePromise = null;
         throw new Error('Model AI gagal dimuat turun (' + (err.message || err) + ')');
       });
   }
-  return aiUpscalerPromise;
+  return aiModulePromise;
 }
 
-const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+// Jeda ringkas untuk benarkan UI dilukis. JANGAN guna requestAnimationFrame:
+// ia tidak dijalankan langsung pada tab latar belakang, jadi proses akan tersekat.
+const nextFrame = () => new Promise(r => setTimeout(r, 16));
+
+// diagnostik ringkas (?debug=1): rakam langkah ke window.__dbg
+const DBG = new URLSearchParams(location.search).has('debug');
+const dbg = (...a) => { if (DBG) (window.__dbg ||= []).push(a.join(' ')); };
+
+function dataUrlToBlob(url) {
+  const comma = url.indexOf(',');
+  const header = url.slice(0, comma);
+  const mime = (header.match(/:(.*?);/) || [, 'image/png'])[1];
+  const bin = atob(url.slice(comma + 1));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
 
 function imageFromUrl(url) {
-  const img = new Image();
-  img.src = url;
-  return img.decode().then(() => img);
+  // createImageBitmap jauh lebih stabil daripada <img>.decode() untuk data URL
+  return createImageBitmap(dataUrlToBlob(url));
 }
 
 /** Naik taraf satu imej dengan model AI (jubin + jahitan). */
@@ -329,7 +342,9 @@ async function upscaleItemAI(item) {
 
     item.statusText = 'Memuatkan model AI…';
     renderRow(item);
-    const upscaler = await getUpscaler();
+    dbg('getUpscaler start');
+    const mod = await getUpscalerModule();
+    dbg('getUpscaler ok', typeof mod.default);
 
     const src = document.createElement('canvas');
     src.width = bmp.width;
@@ -337,7 +352,7 @@ async function upscaleItemAI(item) {
     src.getContext('2d').drawImage(bmp, 0, 0);
 
     const hasAlpha = hasTransparency(src);
-    const out = await aiUpscaleCanvas(src, upscaler, (done, total) => {
+    const out = await aiUpscaleCanvas(src, mod, (done, total) => {
       item.statusText = `AI: bahagian ${done}/${total}…`;
       renderRow(item);
     });
@@ -372,8 +387,14 @@ async function upscaleItemAI(item) {
 /**
  * Jubin berlapis: setiap jubin di-uperes 2×, bahagian tengahnya dicantum
  * supaya tiada garis sambungan pada sempadan.
+ *
+ * Nota penting: instans Upscaler dibuat baharu untuk setiap jubin. Menggunakan
+ * satu instans berulang kali menyebabkan panggilan kedua tersekat pada sesetengah
+ * pemacu GPU (Intel/D3D11). Mencipta + dispose setiap kali mengambil ~0.2s kerana
+ * pemberat model sudah dicache.
  */
-async function aiUpscaleCanvas(src, upscaler, onProgress) {
+async function aiUpscaleCanvas(src, mod, onProgress) {
+  const Upscaler = mod.default;
   const W = src.width, H = src.height, S = 2;
   const STEP = AI_TILE - AI_OVERLAP;
   const cols = Math.max(1, Math.ceil((W - AI_TILE) / STEP) + 1);
@@ -394,6 +415,7 @@ async function aiUpscaleCanvas(src, upscaler, onProgress) {
   const half = AI_OVERLAP / 2;
   const total = cols * rows;
   let done = 0;
+  onProgress(0, total);
 
   for (let ty = 0; ty < rows; ty++) {
     for (let tx = 0; tx < cols; tx++) {
@@ -404,9 +426,20 @@ async function aiUpscaleCanvas(src, upscaler, onProgress) {
       tile.width = AI_TILE;
       tile.height = AI_TILE;
       tile.getContext('2d').drawImage(padded, x0, y0, AI_TILE, AI_TILE, 0, 0, AI_TILE, AI_TILE);
+      dbg('tile', tx, ty, 'drawn', performance.now().toFixed(0));
 
-      const dataUrl = await upscaler.upscale(tile);
+      const upscaler = new Upscaler();
+      let dataUrl;
+      try {
+        await upscaler.warmup?.();
+        dataUrl = await upscaler.upscale(tile);
+      } finally {
+        try { upscaler.dispose?.(); } catch { /* abaikan */ }
+      }
+      dbg('tile', tx, ty, 'upscaled', performance.now().toFixed(0));
+
       const img = await imageFromUrl(dataUrl);
+      dbg('tile', tx, ty, 'decoded');
       const ratio = img.width / AI_TILE;
 
       const sX = x0 + (x0 === 0 ? 0 : half);

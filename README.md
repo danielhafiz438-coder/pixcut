@@ -5,7 +5,10 @@ dimuat naik ke pelayan.
 
 **Live:** https://danielhafiz438-coder.github.io/pixcut/
 
-- **Naik taraf imej** — 2× / 4× menggunakan resample Lanczos (pica) + unsharp mask.
+- **Naik taraf imej** — dua enjin:
+  - **Lanczos** (pica) — resample 2×/4× + unsharp mask. Segera.
+  - **AI super-res** (ESRGAN melalui UpscalerJS) — menambah butiran sebenar pada 2×,
+    diproses berjubin 256px supaya memori terkawal.
 - **Buang latar** — dua mod:
   - **AI** — model segmentasi ISNet (`@imgly/background-removal`) berjalan melalui
     WebAssembly/ONNX Runtime dalam tab anda.
@@ -46,10 +49,14 @@ npx netlify deploy --prod --dir=.
 
 ## Nota teknikal
 
-- Had input naik taraf: 12 MP; had output: 64 MP.
-- Mod AI memuat turun model (~40 MB) dari CDN pada penggunaan pertama, kemudian
-  disimpan dalam cache HTTP pelayar. Inferens berlaku pada peranti.
-- Output naik taraf: PNG jika sumber mungkin telus, JPEG (0.92) untuk JPEG asal.
+- Had input naik taraf: 12 MP (Lanczos), 1 MP (AI, sebab masa pemprosesan).
+- Enjin AI: model ESRGAN 2× (~1 MB) dari CDN, dimuat turun sekali. Imej dipecah
+  kepada jubin 256px dengan pertindihan 32px lalu dicantum — tiada garis sambungan.
+  Anggaran 60–90 saat untuk 1 MP pada CPU/GPU bersepadu kelas pertengahan.
+- Mod AI tidak menyokong 4× secara langsung; jalankan dua kali atau guna Lanczos 4×.
+- Buang latar AI memuat turun model segmentasi (~40 MB) dari CDN pada penggunaan
+  pertama, kemudian disimpan dalam cache HTTP pelayar.
+- Output naik taraf: PNG jika ada ketelusan, JPEG (0.92) jika tiada.
 - Output buang latar: PNG dengan saluran alfa.
 
 ## Lesen

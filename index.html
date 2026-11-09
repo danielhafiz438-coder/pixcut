@@ -56,6 +56,13 @@
 
     <div class="controls" id="upscaleControls" hidden>
       <div class="control">
+        <span class="control-label">Enjin</span>
+        <div class="segmented" id="engineSeg" role="group" aria-label="Enjin pembesaran">
+          <button class="seg is-active" data-engine="lanczos">Lanczos · segera</button>
+          <button class="seg" data-engine="ai">AI · super-res</button>
+        </div>
+      </div>
+      <div class="control" id="scaleControl">
         <span class="control-label">Pembesaran</span>
         <div class="segmented" id="scaleSeg" role="group" aria-label="Saiz pembesaran">
           <button class="seg is-active" data-scale="2">2×</button>
@@ -75,7 +82,7 @@
 
     <ul class="results" id="resultsUpscale"></ul>
 
-    <p class="hint">Petua: gunakan 2× untuk imej besar, 4× untuk ikon atau imej kecil. Had input 12&nbsp;MP setiap imej.</p>
+    <p class="hint" id="upscaleHint">Petua: gunakan 2× untuk imej besar, 4× untuk ikon atau imej kecil. Had input 12&nbsp;MP setiap imej.</p>
   </section>
 
   <!-- ============ BACKGROUND ============ -->
@@ -133,7 +140,7 @@
     <h2>Soalan lazim</h2>
     <details><summary>Adakah imej saya dimuat naik ke pelayan?</summary><p>Tidak. Semua pemprosesan berjalan di dalam pelayar menggunakan Canvas, WebAssembly dan WebGL/WebGPU. Tiada API pemprosesan imej dipanggil.</p></details>
     <details><summary>Kenapa mod AI perlu muat turun fail besar?</summary><p>Model segmentasi (~40&nbsp;MB) diperlukan untuk memisahkan subjek daripada latar. Ia dimuat turun sekali dari CDN awam dan disimpan dalam cache pelayar, jadi penggunaan seterusnya lebih pantas.</p></details>
-    <details><summary>Bagaimana naik taraf berfungsi?</summary><p>Imej diresample dengan algoritma Lanczos (pica) dan diberi sedikit unsharp mask untuk mengekalkan tepi. Ia bukan penjanaan butiran baharu seperti model super-resolution.</p></details>
+    <details><summary>Bagaimana naik taraf berfungsi?</summary><p>Dua enjin. <b>Lanczos</b> menggunakan resample pica + unsharp mask — pantas dan sesuai untuk imej besar. <b>AI</b> menggunakan model ESRGAN (UpscalerJS) yang menjana butiran baharu pada skala 2×; imej diproses dalam jubin 256px dengan pertindihan supaya memori terkawal dan tiada garis sambungan.</p></details>
     <details><summary>Format apa yang disokong?</summary><p>Input: JPG, PNG, WebP, GIF (bingkai pertama), HEIC jika pelayar anda menyokongnya. Output: PNG untuk semua hasil (mengekalkan ketelusan).</p></details>
   </section>
 </main>

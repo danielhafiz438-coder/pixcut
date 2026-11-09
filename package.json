@@ -1,0 +1,15 @@
+{
+  "name": "pixcut",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Naik taraf imej & buang latar — 100% dalam pelayar",
+  "scripts": {
+    "dev": "node server.mjs",
+    "vendor": "cp node_modules/pica/dist/pica.min.mjs assets/pica.min.mjs"
+  },
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "pica": "10.0.3"
+  }
+}

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixCut — Naik taraf imej & buang latar</title>
+<meta name="description" content="Naik taraf resolusi imej 2x/4x dan buang latar belakang — semuanya diproses dalam pelayar anda. Tiada muat naik ke pelayan.">
+<meta name="theme-color" content="#f7f8fc">
+<meta property="og:title" content="PixCut — Naik taraf imej & buang latar">
+<meta property="og:description" content="Upscale 2x/4x dan remove background, 100% dalam pelayar.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f5bff'/%3E%3Cpath d='M9 22l4.5-9 4 7 3-4 4 6z' fill='white'/%3E%3Ccircle cx='11' cy='11' r='2.2' fill='white'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://esm.sh">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="./">
+    <span class="mark" aria-hidden="true">
+      <svg viewBox="0 0 32 32" width="26" height="26"><rect width="32" height="32" rx="9" fill="url(#g)"/><path d="M8 23l5.5-11 4.4 7.6 3.2-4.4L26 23z" fill="#fff"/><circle cx="11" cy="10.5" r="2.3" fill="#fff"/><defs><linearGradient id="g" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#2f5bff"/><stop offset="1" stop-color="#7b5bff"/></linearGradient></defs></svg>
+    </span>
+    <span class="brand-name">PixCut</span>
+    <span class="badge">local</span>
+  </a>
+  <nav class="topnav">
+    <a href="#tool" class="navlink">Alat</a>
+    <a href="#faq" class="navlink">Soalan</a>
+    <a id="repoLink" class="navlink gh" href="#" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</header>
+
+<main id="tool">
+
+  <section class="hero">
+    <h1>Naik taraf imej. Buang latar.</h1>
+    <p class="lede">Dua alat dalam satu halaman. Semua pemprosesan berlaku di dalam pelayar anda — fail anda tidak dimuat naik ke mana-mana pelayan.</p>
+  </section>
+
+  <div class="tabs" role="tablist" aria-label="Pilih alat">
+    <button class="tab is-active" role="tab" aria-selected="true" aria-controls="panel-upscale" data-tab="upscale">Naik taraf imej</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-bg" data-tab="bg">Buang latar</button>
+  </div>
+
+  <!-- ============ UPSCALE ============ -->
+  <section class="panel is-active" id="panel-upscale" role="tabpanel">
+    <div class="dropzone" id="dzUpscale" tabindex="0" role="button" aria-label="Pilih imej untuk dinaik taraf">
+      <div class="dz-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/>
+        </svg>
+      </div>
+      <p class="dz-title">Lepaskan imej di sini</p>
+      <p class="dz-sub">atau <span class="link">pilih dari peranti</span> · JPG, PNG, WebP</p>
+      <input type="file" id="inputUpscale" accept="image/*" multiple hidden>
+    </div>
+
+    <div class="controls" id="upscaleControls" hidden>
+      <div class="control">
+        <span class="control-label">Pembesaran</span>
+        <div class="segmented" id="scaleSeg" role="group" aria-label="Saiz pembesaran">
+          <button class="seg is-active" data-scale="2">2×</button>
+          <button class="seg" data-scale="4">4×</button>
+        </div>
+      </div>
+      <div class="control">
+        <span class="control-label">Ketajaman</span>
+        <div class="range-row">
+          <input type="range" id="sharpen" min="0" max="100" value="35" step="5" aria-label="Ketajaman">
+          <span class="control-value" id="sharpenVal">35</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btnUpscale">Naik taraf</button>
+      <button class="btn btn-ghost" id="btnClearUpscale">Kosongkan</button>
+    </div>
+
+    <ul class="results" id="resultsUpscale"></ul>
+
+    <p class="hint">Petua: gunakan 2× untuk imej besar, 4× untuk ikon atau imej kecil. Had input 12&nbsp;MP setiap imej.</p>
+  </section>
+
+  <!-- ============ BACKGROUND ============ -->
+  <section class="panel" id="panel-bg" role="tabpanel" hidden>
+    <div class="dropzone" id="dzBg" tabindex="0" role="button" aria-label="Pilih imej untuk dibuang latar">
+      <div class="dz-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/>
+        </svg>
+      </div>
+      <p class="dz-title">Lepaskan imej di sini</p>
+      <p class="dz-sub">atau <span class="link">pilih dari peranti</span> · JPG, PNG, WebP</p>
+      <input type="file" id="inputBg" accept="image/*" hidden>
+    </div>
+
+    <div class="controls" id="bgControls" hidden>
+      <div class="control">
+        <span class="control-label">Mod</span>
+        <div class="segmented" id="modeSeg" role="group" aria-label="Mod buang latar">
+          <button class="seg is-active" data-mode="ai" title="Model AI (~40 MB, dimuat turun sekali)">AI · kualiti</button>
+          <button class="seg" data-mode="fast" title="Berdasarkan warna latar">Warna · pantas</button>
+        </div>
+      </div>
+      <div class="control" id="tolWrap" hidden>
+        <span class="control-label">Toleransi</span>
+        <div class="range-row">
+          <input type="range" id="tolerance" min="4" max="60" value="24" step="1" aria-label="Toleransi warna">
+          <span class="control-value" id="tolVal">24</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btnBg">Buang latar</button>
+      <button class="btn btn-ghost" id="btnClearBg">Kosongkan</button>
+    </div>
+
+    <div class="bg-stage" id="bgStage" hidden>
+      <div class="bg-preview">
+        <div class="checker">
+          <canvas id="bgCanvas"></canvas>
+        </div>
+        <div class="bg-meta" id="bgMeta"></div>
+      </div>
+      <div class="bg-side">
+        <div class="progress" id="bgProgress" hidden>
+          <div class="bar"><i id="bgBar"></i></div>
+          <span id="bgStatus">Menyediakan…</span>
+        </div>
+        <button class="btn btn-primary btn-block" id="btnBgDownload" hidden>Muat turun PNG</button>
+        <p class="hint" id="bgHint">Mod AI memuat turun model (~40&nbsp;MB) pada penggunaan pertama, kemudian disimpan dalam cache pelayar. Pemprosesan tetap berlaku pada peranti anda.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FAQ ============ -->
+  <section class="faq" id="faq">
+    <h2>Soalan lazim</h2>
+    <details><summary>Adakah imej saya dimuat naik ke pelayan?</summary><p>Tidak. Semua pemprosesan berjalan di dalam pelayar menggunakan Canvas, WebAssembly dan WebGL/WebGPU. Tiada API pemprosesan imej dipanggil.</p></details>
+    <details><summary>Kenapa mod AI perlu muat turun fail besar?</summary><p>Model segmentasi (~40&nbsp;MB) diperlukan untuk memisahkan subjek daripada latar. Ia dimuat turun sekali dari CDN awam dan disimpan dalam cache pelayar, jadi penggunaan seterusnya lebih pantas.</p></details>
+    <details><summary>Bagaimana naik taraf berfungsi?</summary><p>Imej diresample dengan algoritma Lanczos (pica) dan diberi sedikit unsharp mask untuk mengekalkan tepi. Ia bukan penjanaan butiran baharu seperti model super-resolution.</p></details>
+    <details><summary>Format apa yang disokong?</summary><p>Input: JPG, PNG, WebP, GIF (bingkai pertama), HEIC jika pelayar anda menyokongnya. Output: PNG untuk semua hasil (mengekalkan ketelusan).</p></details>
+  </section>
+</main>
+
+<footer class="footer">
+  <span>PixCut · alat imej 100% tempatan</span>
+  <span class="dot">·</span>
+  <span>Dibina dengan canvas + WebAssembly</span>
+</footer>
+
+<script type="module" src="assets/app.js"></script>
+</body>
+</html>

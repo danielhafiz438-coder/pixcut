@@ -3,6 +3,8 @@
 Dua alat imej dalam satu halaman, semuanya diproses **di dalam pelayar** — tiada fail
 dimuat naik ke pelayan.
 
+**Live:** https://danielhafiz438-coder.github.io/pixcut/
+
 - **Naik taraf imej** — 2× / 4× menggunakan resample Lanczos (pica) + unsharp mask.
 - **Buang latar** — dua mod:
   - **AI** — model segmentasi ISNet (`@imgly/background-removal`) berjalan melalui

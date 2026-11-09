@@ -231,8 +231,10 @@ function renderRow(item) {
         ` · hasil <b>${fmtBytes(item.blob.size)}</b>`;
     }
     action.innerHTML = '<button class="btn btn-primary" type="button">Muat turun</button>';
-    $('button', action).addEventListener('click', () =>
-      download(item.blob, `${baseName(item.file.name)}_${item.scale}x${item.engineTag ? '-' + item.engineTag : ''}.png`));
+    $('button', action).addEventListener('click', () => {
+      const ext = item.blob.type === 'image/jpeg' ? 'jpg' : 'png';
+      download(item.blob, `${baseName(item.file.name)}_${item.scale}x${item.engineTag ? '-' + item.engineTag : ''}.${ext}`);
+    });
     return;
   }
   action.innerHTML = '';

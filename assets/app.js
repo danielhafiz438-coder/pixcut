@@ -16,19 +16,35 @@ if (repoLink) repoLink.href = REPO_URL;
 /*  Tab                                                                */
 /* ------------------------------------------------------------------ */
 
+const HERO = {
+  upscale: {
+    title: 'Naik taraf imej',
+    sub: 'Naikkan resolusi imej anda sehingga 4× — dengan enjin AI super-res atau Lanczos, terus dalam pelayar.',
+  },
+  bg: {
+    title: 'Buang latar',
+    sub: 'Potong latar belakang JPG dan PNG dengan model segmentasi yang berjalan pada peranti anda.',
+  },
+};
+
 function setTab(name) {
-  $$('.tab').forEach(t => {
+  $$('.navitem[data-tab]').forEach(t => {
     const on = t.dataset.tab === name;
     t.classList.toggle('is-active', on);
     t.setAttribute('aria-selected', String(on));
   });
-  $$('.panel').forEach(p => {
+  $$('.tool-panel').forEach(p => {
     const on = p.id === `panel-${name}`;
     p.classList.toggle('is-active', on);
     p.hidden = !on;
   });
+  const hero = HERO[name] || HERO.upscale;
+  if ($('#heroTitle')) $('#heroTitle').textContent = hero.title;
+  if ($('#heroSub')) $('#heroSub').textContent = hero.sub;
+  if ($('#uploaderUpscale')) $('#uploaderUpscale').hidden = name !== 'upscale';
+  if ($('#uploaderBg')) $('#uploaderBg').hidden = name !== 'bg';
 }
-$$('.tab').forEach(t => t.addEventListener('click', () => setTab(t.dataset.tab)));
+$$('.navitem[data-tab]').forEach(t => t.addEventListener('click', () => setTab(t.dataset.tab)));
 const initialTab = location.hash === '#bg' ? 'bg' : 'upscale';
 setTab(initialTab);
 
@@ -112,6 +128,50 @@ function wireDropzone(zone, input, onFiles) {
 }
 
 const loadBitmap = file => createImageBitmap(file);
+
+/* ------------------------------------------------------------------ */
+/*  Sumber input: butang bulat, tampal papan klip, notifikasi          */
+/* ------------------------------------------------------------------ */
+
+let toastTimer = null;
+
+function toast(msg) {
+  let el = $('.toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'toast';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('is-visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('is-visible'), 3200);
+}
+
+function wireSourceButtons(input, pick, paste, onFiles) {
+  pick?.addEventListener('click', e => {
+    e.stopPropagation();
+    input.click();
+  });
+  paste?.addEventListener('click', async e => {
+    e.stopPropagation();
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find(t => t.startsWith('image/'));
+        if (type) {
+          const blob = await item.getType(type);
+          onFiles([new File([blob], `tampal.${type.split('/')[1]}`, { type })]);
+          return;
+        }
+      }
+      toast('Tiada imej dalam papan klip.');
+    } catch {
+      toast('Pelayar tidak benarkan baca papan klip — tekan Ctrl+V di halaman ini.');
+    }
+  });
+}
 
 /* ------------------------------------------------------------------ */
 /*  Alat 1 — Naik taraf imej                                           */
@@ -501,7 +561,16 @@ const dzBg = $('#dzBg');
 const inputBg = $('#inputBg');
 const bgControls = $('#bgControls');
 const bgStage = $('#bgStage');
-const bgCanvas = $('#bgCanvas');
+const bgPreview = $('#bgPreview');
+let bgPreviewUrl = null;
+
+/** Tunjuk imej dalam kotak semak (img, bukan canvas — lebih tepat & ringan). */
+function setPreview(source) {
+  if (bgPreviewUrl) URL.revokeObjectURL(bgPreviewUrl);
+  bgPreviewUrl = URL.createObjectURL(source);
+  bgPreview.src = bgPreviewUrl;
+  bgPreview.hidden = false;
+}
 const bgMeta = $('#bgMeta');
 const bgProgress = $('#bgProgress');
 const bgBar = $('#bgBar');
@@ -528,7 +597,7 @@ $('#tolerance').addEventListener('input', e => {
   syncRangeFill(e.target);
 });
 
-wireDropzone(dzBg, inputBg, async files => {
+async function loadBgFile(files) {
   bgFile = files[0];
   bgResult = null;
   bgControls.hidden = false;
@@ -538,19 +607,20 @@ wireDropzone(dzBg, inputBg, async files => {
   $('#bgHint').hidden = bgMode !== 'ai';
 
   const bmp = await loadBitmap(bgFile);
-  bgCanvas.width = bmp.width;
-  bgCanvas.height = bmp.height;
-  bgCanvas.getContext('2d').drawImage(bmp, 0, 0);
+  setPreview(bgFile);
   bgMeta.textContent = `${bgFile.name} · ${bmp.width}×${bmp.height} · ${fmtBytes(bgFile.size)}`;
-});
+}
+
+wireDropzone(dzBg, inputBg, loadBgFile);
 
 $('#btnClearBg').addEventListener('click', () => {
   bgFile = null;
   bgResult = null;
   bgControls.hidden = true;
   bgStage.hidden = true;
-  const ctx = bgCanvas.getContext('2d');
-  ctx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+  if (bgPreviewUrl) { URL.revokeObjectURL(bgPreviewUrl); bgPreviewUrl = null; }
+  bgPreview.removeAttribute('src');
+  bgPreview.hidden = true;
 });
 
 function setProgress(pct, text) {
@@ -582,9 +652,7 @@ btnBg.addEventListener('click', async () => {
 
 async function drawResult(blob) {
   const bmp = await loadBitmap(blob);
-  bgCanvas.width = bmp.width;
-  bgCanvas.height = bmp.height;
-  bgCanvas.getContext('2d').drawImage(bmp, 0, 0);
+  setPreview(blob);
   bgMeta.textContent = `${bmp.width}×${bmp.height} · PNG · ${fmtBytes(blob.size)}`;
 }
 
@@ -738,3 +806,18 @@ async function removeByColor(file) {
 
 // isi trek slider pada muatan pertama
 ['#sharpen', '#tolerance'].forEach(sel => { const el = $(sel); if (el) syncRangeFill(el); });
+
+/* butang bulat + tampal papan klip */
+wireSourceButtons(inputUpscale, $('#pickUpscale'), $('#pasteUpscale'), addFiles);
+wireSourceButtons(inputBg, $('#pickBg'), $('#pasteBg'), loadBgFile);
+
+document.addEventListener('paste', e => {
+  const items = [...(e.clipboardData?.items || [])];
+  const file = items.find(i => i.type.startsWith('image/'))?.getAsFile();
+  if (!file) return;
+  e.preventDefault();
+  const active = $('.tool-panel.is-active');
+  if (active?.id === 'panel-bg') loadBgFile([file]);
+  else addFiles([file]);
+  toast('Imej ditampal dari papan klip.');
+});

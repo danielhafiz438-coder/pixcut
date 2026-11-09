@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PixCut — Naik taraf imej & buang latar</title>
+<title>PixCut — Naik taraf imej &amp; buang latar</title>
 <meta name="description" content="Naik taraf resolusi imej 2x/4x dan buang latar belakang — semuanya diproses dalam pelayar anda. Tiada muat naik ke pelayan.">
-<meta name="theme-color" content="#0f1115">
-<meta property="og:title" content="PixCut — Naik taraf imej & buang latar">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:title" content="PixCut — Naik taraf imej &amp; buang latar">
 <meta property="og:description" content="Upscale 2x/4x dan remove background, 100% dalam pelayar.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f0b24a'/%3E%3Cpath d='M9 22l4.5-9 4 7 3-4 4 6z' fill='%231a1204'/%3E%3Ccircle cx='11' cy='11' r='2.2' fill='%231a1204'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234d90fe'/%3E%3Cpath d='M9 22l4.5-9 4 7 3-4 4 6z' fill='white'/%3E%3Ccircle cx='11' cy='11' r='2.2' fill='white'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://esm.sh">
 <link rel="stylesheet" href="assets/style.css">
 </head>
@@ -17,149 +17,156 @@
 <header class="topbar">
   <div class="topbar-inner">
     <a class="brand" href="./">
-      <svg class="mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true">
-        <rect width="32" height="32" rx="7" fill="#f0b24a"/>
-        <path d="M8 23l5.5-11 4.4 7.6 3.2-4.4L26 23z" fill="#1a1204"/>
-        <circle cx="11" cy="10.5" r="2.3" fill="#1a1204"/>
+      <svg class="mark" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="#4d90fe"/>
+        <path d="M8 23l5.5-11 4.4 7.6 3.2-4.4L26 23z" fill="#fff"/>
+        <circle cx="11" cy="10.5" r="2.3" fill="#fff"/>
       </svg>
-      <span class="brand-name">PixCut</span>
+      <span class="brand-name">Pix<span class="brand-accent">Cut</span></span>
     </a>
-    <nav class="topnav">
-      <a href="#faq" class="navlink">Soalan</a>
-      <a id="repoLink" class="navlink navlink-quiet" href="https://github.com/danielhafiz438-coder/pixcut" target="_blank" rel="noopener">GitHub</a>
+
+    <nav class="topnav" aria-label="Alat">
+      <button class="navitem is-active" data-tab="upscale" type="button">Naik taraf imej</button>
+      <button class="navitem" data-tab="bg" type="button">Buang latar</button>
+      <a class="navitem navitem-link" href="#faq">Soalan</a>
     </nav>
+
+    <div class="topbar-right">
+      <a id="repoLink" class="navitem navitem-link" href="https://github.com/danielhafiz438-coder/pixcut" target="_blank" rel="noopener">GitHub</a>
+      <a class="signup" href="#tool">Mula</a>
+      <span class="grid" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </span>
+    </div>
   </div>
 </header>
 
 <main id="tool">
 
-  <section class="intro">
-    <div class="intro-copy">
-      <h1>Naik taraf imej.<br>Buang latar.</h1>
-      <p class="lede">Dua alat dalam satu halaman. Semua pemprosesan berlaku dalam pelayar anda — fail tidak dimuat naik, tidak disimpan, tidak dihantar ke mana-mana.</p>
+  <section class="hero">
+    <span class="pill">Percuma</span>
+    <h1 id="heroTitle">Naik taraf imej</h1>
+    <p class="hero-sub" id="heroSub">Naikkan resolusi imej anda sehingga 4× — dengan enjin AI super-res atau Lanczos, terus dalam pelayar.</p>
+
+    <div class="uploader" id="uploaderUpscale">
+      <div class="dropzone" id="dzUpscale" tabindex="0" role="button" aria-label="Pilih imej untuk dinaik taraf">
+        <span class="cta">Pilih imej</span>
+        <p class="drop-hint">atau lepas imej di sini</p>
+        <input type="file" id="inputUpscale" accept="image/*" multiple hidden>
+      </div>
+      <div class="side-actions">
+        <button type="button" class="circle" id="pickUpscale" aria-label="Pilih fail dari peranti" title="Pilih fail">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5m0 0L7.5 9.5M12 5l4.5 4.5"/><path d="M5 15v3a1 1 0 001 1h12a1 1 0 001-1v-3"/></svg>
+        </button>
+        <button type="button" class="circle" id="pasteUpscale" aria-label="Tampal imej dari papan klip" title="Tampal dari papan klip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="8" height="4" rx="1"/><path d="M8 6H6a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V7a1 1 0 00-1-1h-2"/></svg>
+        </button>
+      </div>
     </div>
-    <dl class="facts">
-      <div><dt>Pemprosesan</dt><dd>Pada peranti anda</dd></div>
-      <div><dt>Muat naik</dt><dd>Tiada</dd></div>
-      <div><dt>Enjin</dt><dd>ESRGAN &amp; ISNet</dd></div>
-    </dl>
+
+    <div class="uploader" id="uploaderBg" hidden>
+      <div class="dropzone" id="dzBg" tabindex="0" role="button" aria-label="Pilih imej untuk dibuang latar">
+        <span class="cta">Pilih imej</span>
+        <p class="drop-hint">atau lepas imej di sini</p>
+        <input type="file" id="inputBg" accept="image/*" hidden>
+      </div>
+      <div class="side-actions">
+        <button type="button" class="circle" id="pickBg" aria-label="Pilih fail dari peranti" title="Pilih fail">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5m0 0L7.5 9.5M12 5l4.5 4.5"/><path d="M5 15v3a1 1 0 001 1h12a1 1 0 001-1v-3"/></svg>
+        </button>
+        <button type="button" class="circle" id="pasteBg" aria-label="Tampal imej dari papan klip" title="Tampal dari papan klip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="8" height="4" rx="1"/><path d="M8 6H6a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V7a1 1 0 00-1-1h-2"/></svg>
+        </button>
+      </div>
+    </div>
   </section>
 
-  <div class="tabs" role="tablist" aria-label="Pilih alat">
-    <button class="tab is-active" role="tab" aria-selected="true" aria-controls="panel-upscale" data-tab="upscale">Naik taraf imej</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="panel-bg" data-tab="bg">Buang latar</button>
+  <div class="workarea">
+
+    <!-- ============ UPSCALE ============ -->
+    <section class="tool-panel is-active" id="panel-upscale" role="tabpanel">
+      <div class="options" id="upscaleControls" hidden>
+        <h2 class="options-title">Pilihan naik taraf</h2>
+
+        <div class="option-row">
+          <span class="option-label">Enjin</span>
+          <div class="segmented" id="engineSeg" role="group" aria-label="Enjin pembesaran">
+            <button class="seg is-active" data-engine="lanczos" type="button">Lanczos</button>
+            <button class="seg" data-engine="ai" type="button">AI super-res</button>
+          </div>
+        </div>
+
+        <div class="option-row" id="scaleControl">
+          <span class="option-label">Saiz pembesaran</span>
+          <div class="scale-cards" id="scaleSeg" role="group" aria-label="Saiz pembesaran">
+            <button class="scale-card is-active" data-scale="2" type="button">2×</button>
+            <button class="scale-card" data-scale="4" type="button">4×</button>
+          </div>
+        </div>
+
+        <div class="option-row">
+          <span class="option-label">Ketajaman</span>
+          <div class="range-row">
+            <input type="range" id="sharpen" min="0" max="100" value="35" step="5" aria-label="Ketajaman">
+            <span class="control-value" id="sharpenVal">35</span>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn-primary" id="btnUpscale" type="button">Naik taraf</button>
+          <button class="btn-quiet" id="btnClearUpscale" type="button">Kosongkan</button>
+        </div>
+      </div>
+
+      <ul class="results" id="resultsUpscale"></ul>
+
+      <p class="hint" id="upscaleHint">Guna 2× untuk imej besar, 4× untuk ikon atau imej kecil. Had input 12&nbsp;MP setiap imej.</p>
+    </section>
+
+    <!-- ============ BACKGROUND ============ -->
+    <section class="tool-panel" id="panel-bg" role="tabpanel" hidden>
+      <div class="options" id="bgControls" hidden>
+        <h2 class="options-title">Pilihan buang latar</h2>
+
+        <div class="option-row">
+          <span class="option-label">Mod</span>
+          <div class="segmented" id="modeSeg" role="group" aria-label="Mod buang latar">
+            <button class="seg is-active" data-mode="ai" type="button" title="Model AI (~40 MB, dimuat turun sekali)">AI · kualiti</button>
+            <button class="seg" data-mode="fast" type="button" title="Berdasarkan warna latar">Warna · pantas</button>
+          </div>
+        </div>
+
+        <div class="option-row" id="tolWrap" hidden>
+          <span class="option-label">Toleransi</span>
+          <div class="range-row">
+            <input type="range" id="tolerance" min="4" max="60" value="24" step="1" aria-label="Toleransi warna">
+            <span class="control-value" id="tolVal">24</span>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn-primary" id="btnBg" type="button">Buang latar</button>
+          <button class="btn-quiet" id="btnClearBg" type="button">Kosongkan</button>
+        </div>
+      </div>
+
+      <div class="bg-stage" id="bgStage" hidden>
+        <div class="bg-preview">
+          <div class="stage-label">Hasil</div>
+          <div class="checker"><img id="bgPreview" alt="Pratonton hasil" hidden></div>
+          <div class="bg-meta" id="bgMeta"></div>
+        </div>
+        <div class="bg-side">
+          <div class="progress" id="bgProgress" hidden>
+            <div class="bar"><i id="bgBar"></i></div>
+            <span id="bgStatus">Menyediakan…</span>
+          </div>
+          <button class="btn-primary btn-block" id="btnBgDownload" type="button" hidden>Muat turun PNG</button>
+          <p class="hint" id="bgHint">Mod AI memuat turun model (~40&nbsp;MB) pada penggunaan pertama, kemudian disimpan dalam cache pelayar. Pemprosesan tetap berlaku pada peranti anda.</p>
+        </div>
+      </div>
+    </section>
   </div>
-
-  <!-- ============ UPSCALE ============ -->
-  <section class="panel is-active" id="panel-upscale" role="tabpanel">
-    <div class="dropzone" id="dzUpscale" tabindex="0" role="button" aria-label="Pilih imej untuk dinaik taraf">
-      <div class="dz-lead">
-        <svg class="dz-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/>
-        </svg>
-        <div class="dz-text">
-          <p class="dz-title">Letak imej di sini</p>
-          <p class="dz-sub">JPG, PNG atau WebP</p>
-        </div>
-      </div>
-      <span class="dz-cta">Pilih imej</span>
-      <input type="file" id="inputUpscale" accept="image/*" multiple hidden>
-    </div>
-
-    <div class="controls" id="upscaleControls" hidden>
-      <div class="control control-wide">
-        <span class="control-label">Enjin</span>
-        <div class="segmented" id="engineSeg" role="group" aria-label="Enjin pembesaran">
-          <button class="seg is-active" data-engine="lanczos">Lanczos</button>
-          <button class="seg" data-engine="ai">AI super-res</button>
-        </div>
-      </div>
-      <div class="control" id="scaleControl">
-        <span class="control-label">Pembesaran</span>
-        <div class="segmented" id="scaleSeg" role="group" aria-label="Saiz pembesaran">
-          <button class="seg is-active" data-scale="2">2×</button>
-          <button class="seg" data-scale="4">4×</button>
-        </div>
-      </div>
-      <div class="control control-range">
-        <span class="control-label">Ketajaman</span>
-        <div class="range-row">
-          <input type="range" id="sharpen" min="0" max="100" value="35" step="5" aria-label="Ketajaman">
-          <span class="control-value" id="sharpenVal">35</span>
-        </div>
-      </div>
-      <div class="control-actions">
-        <span class="control-label control-label-spacer" aria-hidden="true">Aksi</span>
-        <div class="control-actions-row">
-          <button class="btn btn-primary" id="btnUpscale">Naik taraf</button>
-          <button class="btn btn-quiet" id="btnClearUpscale">Kosongkan</button>
-        </div>
-      </div>
-    </div>
-
-    <ul class="results" id="resultsUpscale"></ul>
-
-    <p class="hint" id="upscaleHint">Guna 2× untuk imej besar, 4× untuk ikon atau imej kecil. Had input 12&nbsp;MP setiap imej.</p>
-  </section>
-
-  <!-- ============ BACKGROUND ============ -->
-  <section class="panel" id="panel-bg" role="tabpanel" hidden>
-    <div class="dropzone" id="dzBg" tabindex="0" role="button" aria-label="Pilih imej untuk dibuang latar">
-      <div class="dz-lead">
-        <svg class="dz-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/>
-        </svg>
-        <div class="dz-text">
-          <p class="dz-title">Letak imej di sini</p>
-          <p class="dz-sub">JPG, PNG atau WebP</p>
-        </div>
-      </div>
-      <span class="dz-cta">Pilih imej</span>
-      <input type="file" id="inputBg" accept="image/*" hidden>
-    </div>
-
-    <div class="controls" id="bgControls" hidden>
-      <div class="control">
-        <span class="control-label">Mod</span>
-        <div class="segmented" id="modeSeg" role="group" aria-label="Mod buang latar">
-          <button class="seg is-active" data-mode="ai" title="Model AI (~40 MB, dimuat turun sekali)">AI · kualiti</button>
-          <button class="seg" data-mode="fast" title="Berdasarkan warna latar">Warna · pantas</button>
-        </div>
-      </div>
-      <div class="control control-range" id="tolWrap" hidden>
-        <span class="control-label">Toleransi</span>
-        <div class="range-row">
-          <input type="range" id="tolerance" min="4" max="60" value="24" step="1" aria-label="Toleransi warna">
-          <span class="control-value" id="tolVal">24</span>
-        </div>
-      </div>
-      <div class="control-actions">
-        <span class="control-label control-label-spacer" aria-hidden="true">Aksi</span>
-        <div class="control-actions-row">
-          <button class="btn btn-primary" id="btnBg">Buang latar</button>
-          <button class="btn btn-quiet" id="btnClearBg">Kosongkan</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="bg-stage" id="bgStage" hidden>
-      <div class="bg-preview">
-        <div class="stage-label">Hasil</div>
-        <div class="checker">
-          <canvas id="bgCanvas"></canvas>
-        </div>
-        <div class="bg-meta" id="bgMeta"></div>
-      </div>
-      <div class="bg-side">
-        <div class="progress" id="bgProgress" hidden>
-          <div class="bar"><i id="bgBar"></i></div>
-          <span id="bgStatus">Menyediakan…</span>
-        </div>
-        <button class="btn btn-primary btn-block" id="btnBgDownload" hidden>Muat turun PNG</button>
-        <p class="hint" id="bgHint">Mod AI memuat turun model (~40&nbsp;MB) pada penggunaan pertama, kemudian disimpan dalam cache pelayar. Pemprosesan tetap berlaku pada peranti anda.</p>
-      </div>
-    </div>
-  </section>
 
   <!-- ============ FAQ ============ -->
   <section class="faq" id="faq">
@@ -172,8 +179,7 @@
 </main>
 
 <footer class="footer">
-  <span>PixCut — alat imej tempatan</span>
-  <span>Tiada analitik, tiada akaun, tiada muat naik</span>
+  <span>© PixCut 2026 ® · Alat imej dalam pelayar</span>
 </footer>
 
 <script type="module" src="assets/app.js"></script>

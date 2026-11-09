@@ -72,6 +72,14 @@ function hasTransparency(source) {
   return false;
 }
 
+/** Isi trek slider ikut nilai semasa (--p dipakai oleh CSS). */
+function syncRangeFill(el) {
+  const min = Number(el.min || 0);
+  const max = Number(el.max || 100);
+  const pct = max > min ? ((Number(el.value) - min) / (max - min)) * 100 : 0;
+  el.style.setProperty('--p', `${pct}%`);
+}
+
 /** Sambungkan dropzone: klik, Enter/Space, drag & drop. */
 function wireDropzone(zone, input, onFiles) {
   const open = () => input.click();
@@ -142,6 +150,7 @@ $$('#scaleSeg .seg').forEach(b => b.addEventListener('click', () => {
 $('#sharpen').addEventListener('input', e => {
   sharpen = Number(e.target.value);
   $('#sharpenVal').textContent = sharpen;
+  syncRangeFill(e.target);
 });
 
 function updateDimLabels() {
@@ -516,6 +525,7 @@ $$('#modeSeg .seg').forEach(b => b.addEventListener('click', () => {
 $('#tolerance').addEventListener('input', e => {
   tolerance = Number(e.target.value);
   $('#tolVal').textContent = tolerance;
+  syncRangeFill(e.target);
 });
 
 wireDropzone(dzBg, inputBg, async files => {
@@ -725,3 +735,6 @@ async function removeByColor(file) {
   setProgress(92, 'Mengekod PNG…');
   return canvasToBlob(canvas, 'image/png');
 }
+
+// isi trek slider pada muatan pertama
+['#sharpen', '#tolerance'].forEach(sel => { const el = $(sel); if (el) syncRangeFill(el); });

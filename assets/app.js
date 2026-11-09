@@ -81,11 +81,11 @@ function canvasToBlob(canvas, type, quality) {
 /** Semak sama ada imej benar-benar ada piksel lutsinar. */
 function hasTransparency(source) {
   const probe = document.createElement('canvas');
-  probe.width = probe.height = 96;
-  const ctx = probe.getContext('2d');
-  ctx.drawImage(source, 0, 0, 96, 96);
-  const d = ctx.getImageData(0, 0, 96, 96).data;
-  for (let i = 3; i < d.length; i += 4) if (d[i] < 240) return true;
+  probe.width = probe.height = 256;
+  const ctx = probe.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(source, 0, 0, 256, 256);
+  const d = ctx.getImageData(0, 0, 256, 256).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
   return false;
 }
 
@@ -228,11 +228,12 @@ function dimHtml(ow, oh, nw, nh) {
 }
 
 let seq = 0;
+let runToken = 0;
 
 function addFiles(files) {
   const rejected = [];
   for (const file of files) {
-    const item = { id: `r${++seq}`, file, status: 'queued', ow: 0, oh: 0 };
+    const item = { id: `r${++seq}`, file, status: 'queued', ow: 0, oh: 0, cancelled: false };
     queue.push(item);
     const li = document.createElement('li');
     li.className = 'result';
@@ -255,6 +256,7 @@ function addFiles(files) {
 
 async function inspectImage(item) {
   const bmp = await loadBitmap(item.file);
+  if (item.cancelled) { bmp.close?.(); return; }
   item.ow = bmp.width;
   item.oh = bmp.height;
   item.bmp = bmp;
@@ -263,7 +265,8 @@ async function inspectImage(item) {
     item.status = 'error';
     item.error = `Too large (${mp.toFixed(1)} MP, limit ${MAX_INPUT_MP} MP)`;
   }
-  $(`#row-${item.id} .thumb img`).src = bmpToDataUrl(bmp, 54);
+  const thumb = $(`#row-${item.id} .thumb img`);
+  if (thumb) thumb.src = bmpToDataUrl(bmp, 54);
   const meta = $(`#meta-${item.id}`);
   if (item.status !== 'error' && meta) {
     meta.innerHTML = dimHtml(bmp.width, bmp.height, bmp.width * outScale(), bmp.height * outScale());
@@ -311,13 +314,14 @@ function renderRow(item) {
 }
 
 async function upscaleItem(item) {
-  if (item.status === 'error') return;
+  if (item.status === 'error' || item.cancelled) return;
   item.status = 'working';
   item.statusText = 'Processing…';
   renderRow(item);
   if (engine === 'ai') return upscaleItemAI(item);
   try {
     const bmp = item.bmp || await loadBitmap(item.file);
+    if (item.cancelled) return;
     const w = Math.round(bmp.width * scale);
     const h = Math.round(bmp.height * scale);
     if (w > MAX_SIDE || h > MAX_SIDE || (w * h) / 1e6 > MAX_OUTPUT_MP) {
@@ -338,6 +342,7 @@ async function upscaleItem(item) {
       unsharpRadius: 0.6,
       unsharpThreshold: 2,
     });
+    if (item.cancelled) return;
 
     const hasAlpha = hasTransparency(dst);
     const blob = hasAlpha
@@ -406,7 +411,9 @@ function imageFromUrl(url) {
 /** Naik taraf satu imej dengan model AI (jubin + jahitan). */
 async function upscaleItemAI(item) {
   try {
+    if (item.cancelled) return;
     const bmp = item.bmp || await loadBitmap(item.file);
+    if (item.cancelled) return;
     const mp = (bmp.width * bmp.height) / 1e6;
     if (mp > AI_MAX_MP) {
       throw new Error(`AI is limited to ${AI_MAX_MP} MP (this image is ${mp.toFixed(1)} MP) — use Lanczos`);
@@ -432,7 +439,7 @@ async function upscaleItemAI(item) {
     const out = await aiUpscaleCanvas(src, mod, (done, total) => {
       item.statusText = `AI: tile ${done}/${total}…`;
       renderRow(item);
-    });
+    }, () => item.cancelled);
 
     if (hasAlpha) {
       // kekalkan ketelusan: alpha di-resample dengan pica
@@ -455,6 +462,7 @@ async function upscaleItemAI(item) {
     item.h = out.height;
     item.status = 'done';
   } catch (err) {
+    if (err.message === 'Cancelled' || item.cancelled) return;
     item.status = 'error';
     item.error = err.message || 'Failed';
   }
@@ -470,7 +478,7 @@ async function upscaleItemAI(item) {
  * pemacu GPU (Intel/D3D11). Mencipta + dispose setiap kali mengambil ~0.2s kerana
  * pemberat model sudah dicache.
  */
-async function aiUpscaleCanvas(src, mod, onProgress) {
+async function aiUpscaleCanvas(src, mod, onProgress, shouldStop = () => false) {
   const Upscaler = mod.default;
   const W = src.width, H = src.height, S = 2;
   const STEP = AI_TILE - AI_OVERLAP;
@@ -482,7 +490,13 @@ async function aiUpscaleCanvas(src, mod, onProgress) {
   const padded = document.createElement('canvas');
   padded.width = pw;
   padded.height = ph;
-  padded.getContext('2d').drawImage(src, 0, 0);
+  const pctx = padded.getContext('2d');
+  pctx.drawImage(src, 0, 0);
+  // Sambung piksel tepi ke kawasan tambahan. Tanpa ini model nampak ruang
+  // lutsinar di luar imej dan menghasilkan bingkai gelap pada sempadan.
+  if (pw > W) pctx.drawImage(src, W - 1, 0, 1, H, W, 0, pw - W, H);
+  if (ph > H) pctx.drawImage(src, 0, H - 1, W, 1, 0, H, W, ph - H);
+  if (pw > W && ph > H) pctx.drawImage(src, W - 1, H - 1, 1, 1, W, H, pw - W, ph - H);
 
   const out = document.createElement('canvas');
   out.width = W * S;
@@ -496,6 +510,7 @@ async function aiUpscaleCanvas(src, mod, onProgress) {
 
   for (let ty = 0; ty < rows; ty++) {
     for (let tx = 0; tx < cols; tx++) {
+      if (shouldStop()) throw new Error('Cancelled');
       const x0 = tx * STEP;
       const y0 = ty * STEP;
 
@@ -531,32 +546,51 @@ async function aiUpscaleCanvas(src, mod, onProgress) {
           sX * S, sY * S, (eX - sX) * S, (eY - sY) * S,
         );
       }
+      img.close?.();
 
       done++;
       onProgress(done, total);
       await nextFrame();
     }
   }
+  // Model memberi artifak pada piksel pinggir jubin pertama. Salin 2px
+  // dari dalam ke tepi supaya tiada bingkai gelap pada imej akhir.
+  const edge = 2;
+  if (out.width > edge * 2 && out.height > edge * 2) {
+    octx.drawImage(out, edge, 0, 1, out.height, 0, 0, edge, out.height);
+    octx.drawImage(out, out.width - edge - 1, 0, 1, out.height, out.width - edge, 0, edge, out.height);
+    octx.drawImage(out, 0, edge, out.width, 1, 0, 0, out.width, edge);
+    octx.drawImage(out, 0, out.height - edge - 1, out.width, 1, 0, out.height - edge, out.width, edge);
+  }
   return out;
 }
 
 btnUpscale.addEventListener('click', async () => {
-  const pending = queue.filter(i => i.status === 'queued' || i.status === 'error' && i.bmp);
+  const pending = queue.filter(i => (i.status === 'queued' || i.status === 'error') && i.bmp);
   if (!pending.length) return;
+  const token = ++runToken;
   btnUpscale.disabled = true;
   btnUpscale.textContent = 'Processing…';
   for (const item of pending) {
+    if (token !== runToken) break;
+    item.cancelled = false;
     item.status = 'queued';
     await upscaleItem(item);
   }
-  btnUpscale.disabled = false;
-  btnUpscale.textContent = 'Upscale';
+  if (token === runToken) {
+    btnUpscale.disabled = false;
+    btnUpscale.textContent = 'Upscale';
+  }
 });
 
 $('#btnClearUpscale').addEventListener('click', () => {
+  runToken++;                       // hentikan gelung AI yang sedang berjalan
+  queue.forEach(i => { i.cancelled = true; });
   queue.length = 0;
   resultsEl.innerHTML = '';
   controlsU.hidden = true;
+  btnUpscale.disabled = false;
+  btnUpscale.textContent = 'Upscale';
 });
 
 wireDropzone($('#dzUpscale'), inputUpscale, addFiles);

@@ -5,7 +5,8 @@ import Pica from './pica.min.mjs';
 /* ------------------------------------------------------------------ */
 
 const REPO_URL = 'https://github.com/danielhafiz438-coder/pixcut';
-const MAX_INPUT_MP = 48;      // input cap (memory, not time)
+const DEFAULT_SCALE = 2;      // one press = 2×; 4× is offered from the result
+const MAX_INPUT_MP = 48;      // input cap (memory, not patience)
 const MAX_OUTPUT_MP = 192;    // 2× of a 48 MP photo still fits
 const MAX_SIDE = 16384;       // max canvas side on this class of GPU
 const SHARPEN = 35;           // fixed unsharp strength for the Lanczos path
@@ -28,36 +29,38 @@ const els = {
   resultPane: $('#resultPane'),
   resultPreview: $('#resultPreview'),
   resultMeta: $('#resultMeta'),
-  progress: $('#progress'),
-  bar: $('#bar'),
-  barFill: $('#barFill'),
-  progressText: $('#progressText'),
-  scaleSeg: $('#scaleSeg'),
-  segs: $$('#scaleSeg .seg'),
+  resultLinks: $('#resultLinks'),
+  linkFull: $('#linkFull'),
+  btnFour: $('#btnFour'),
+  btnDownload: $('#btnDownload'),
+  downloadLabel: $('#downloadLabel'),
   btnUpscale: $('#btnUpscale'),
   btnBg: $('#btnBg'),
-  btnDownload: $('#btnDownload'),
   btnReset: $('#btnReset'),
+  status: $('#status'),
+  bar: $('#bar'),
+  barFill: $('#barFill'),
+  statusText: $('#statusText'),
   hint: $('#hint'),
   dropOverlay: $('#dropOverlay'),
 };
 
 const state = {
   file: null,
-  source: null,      // canvas holding the decoded pixels
+  source: null,        // canvas holding the decoded pixels
   width: 0,
   height: 0,
-  scale: 2,
-  result: null,      // { blob, url, tag }
+  result: null,        // { blob, url, tag, label, seconds, w, h }
   originalUrl: null,
   busy: false,
   token: 0,
+  error: '',
 };
 
 $('#repoLink').href = REPO_URL;
 
 /* ------------------------------------------------------------------ */
-/*  Small utilities                                                    */
+/*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
 const fmtBytes = n => n < 1024
@@ -71,7 +74,20 @@ const baseName = name => (name || 'image')
   .replace(/[^\w\-. ]+/g, '_')
   .slice(0, 60) || 'image';
 
+const extOf = blob => (blob.type === 'image/png' ? 'png' : 'jpg');
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[c]));
+
 const clamp = (n, min = 0, max = 100) => Math.min(max, Math.max(min, n));
+
+/** <b> element built through the DOM so user text can never be parsed as HTML. */
+function strong(text) {
+  const b = document.createElement('b');
+  b.textContent = text;
+  return b;
+}
 
 let toastTimer = null;
 
@@ -103,7 +119,7 @@ function download(blob, filename) {
 function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
-      b => (b ? resolve(b) : reject(new Error('The browser could not encode the result — the image may be too large.'))),
+      b => (b ? resolve(b) : reject(new Error('The browser could not encode the result — try a smaller image.'))),
       type,
       quality,
     );
@@ -147,26 +163,57 @@ async function decodeToCanvas(file) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Progress + busy state                                              */
+/*  Geometry                                                           */
+/* ------------------------------------------------------------------ */
+
+function outputSize(scale) {
+  return {
+    w: Math.round(state.width * scale),
+    h: Math.round(state.height * scale),
+  };
+}
+
+function tooBig({ w, h }) {
+  return w > MAX_SIDE || h > MAX_SIDE || (w * h) / 1e6 > MAX_OUTPUT_MP;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Status + busy state                                                */
 /* ------------------------------------------------------------------ */
 
 let tickTimer = null;
+let savedTimer = null;
 
-function startJob(text, indeterminate = true) {
+function updateButtons() {
+  const idle = !state.busy && !!state.file;
+  els.btnUpscale.disabled = !idle || tooBig(outputSize(DEFAULT_SCALE));
+  els.btnBg.disabled = !idle;
+  els.btnReset.disabled = !state.file || state.busy;
+  els.btnDownload.disabled = state.busy || !state.result;
+  els.btnFour.disabled = state.busy;
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  els.studio.setAttribute('aria-busy', String(busy));
+  updateButtons();
+}
+
+function startJob(text) {
   const token = ++state.token;
-  state.busy = true;
-  setBusy(true);
+  state.error = '';
 
-  els.progress.hidden = false;
-  els.bar.classList.toggle('is-indeterminate', indeterminate);
-  els.barFill.style.width = indeterminate ? '38%' : '0%';
-  els.progressText.textContent = text;
-  els.hint.classList.remove('is-error');
+  setBusy(true);
+  els.status.hidden = false;
+  els.statusText.textContent = text;
+  els.bar.classList.add('is-indeterminate');
+  els.barFill.style.width = '38%';
+  updateHint();
 
   const t0 = performance.now();
   clearInterval(tickTimer);
   tickTimer = setInterval(() => {
-    els.progressText.textContent = `${text} · ${((performance.now() - t0) / 1000).toFixed(0)}s`;
+    els.statusText.textContent = `${text} · ${((performance.now() - t0) / 1000).toFixed(0)}s`;
   }, 300);
 
   return token;
@@ -177,18 +224,16 @@ function setProgress(pct, text) {
   tickTimer = null;
   els.bar.classList.remove('is-indeterminate');
   els.barFill.style.width = `${clamp(pct)}%`;
-  if (text) els.progressText.textContent = text;
+  if (text) els.statusText.textContent = text;
 }
 
 function endJob(token) {
   if (token !== state.token) return;
   clearInterval(tickTimer);
   tickTimer = null;
-  state.busy = false;
   setBusy(false);
   els.bar.classList.remove('is-indeterminate');
-  els.barFill.style.width = '100%';
-  syncHint();
+  if (!state.error) els.barFill.style.width = '100%';
 }
 
 function failJob(err) {
@@ -196,15 +241,43 @@ function failJob(err) {
   tickTimer = null;
   els.bar.classList.remove('is-indeterminate');
   els.barFill.style.width = '0%';
-  els.progressText.textContent = 'Failed';
-  els.hint.classList.add('is-error');
-  els.hint.textContent = err?.message || String(err);
+  els.statusText.textContent = 'Failed';
+  state.error = err?.message || String(err);
+  updateHint();
 }
 
-function setBusy(busy) {
-  [els.btnUpscale, els.btnBg, els.btnReset, els.btnDownload, ...els.segs]
-    .forEach(b => { b.disabled = busy; });
-  if (!busy) syncHint();
+/* ------------------------------------------------------------------ */
+/*  Copy that reflects the current state                               */
+/* ------------------------------------------------------------------ */
+
+function filenameFor(result = state.result) {
+  if (!result) return '';
+  return `${baseName(state.file?.name)}_${result.tag}.${extOf(result.blob)}`;
+}
+
+function updateHint() {
+  const hint = els.hint;
+  hint.classList.toggle('is-error', !!state.error);
+
+  if (state.error) {
+    hint.textContent = state.error;
+    return;
+  }
+  if (!state.file) {
+    hint.textContent = '';
+    return;
+  }
+  if (state.result) {
+    hint.innerHTML = `Saved as <b>${esc(filenameFor())}</b> · press <kbd>D</kbd> to download again.`;
+    return;
+  }
+  if (tooBig(outputSize(DEFAULT_SCALE))) {
+    hint.textContent = `This image is too large to upscale here (${MAX_SIDE} px a side, ${MAX_OUTPUT_MP} MP). Background removal still works.`;
+    return;
+  }
+  const out = outputSize(DEFAULT_SCALE);
+  hint.innerHTML = `Original <b>${state.width}×${state.height}</b> px · upscaling 2× gives `
+    + `<b>${out.w}×${out.h}</b> px · background removal keeps the original size.`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -217,7 +290,10 @@ function clearResult() {
   els.resultPane.hidden = true;
   els.resultPreview.removeAttribute('src');
   els.btnDownload.hidden = true;
+  els.resultLinks.hidden = true;
+  els.btnFour.hidden = true;
   els.panes.classList.remove('has-result');
+  els.studio.classList.remove('has-result');
 }
 
 function clearSource() {
@@ -229,6 +305,7 @@ function clearSource() {
     state.originalUrl = null;
   }
   els.originalPreview.removeAttribute('src');
+  els.originalMeta.replaceChildren();
 }
 
 async function loadFile(file) {
@@ -250,7 +327,7 @@ async function loadFile(file) {
     return;
   }
 
-  state.token++;              // cancel anything from the previous image
+  state.token++;              // cancels anything still running for the old image
   clearResult();
   clearSource();
 
@@ -258,91 +335,110 @@ async function loadFile(file) {
   state.source = source;
   state.width = source.width;
   state.height = source.height;
+  state.error = '';
 
   state.originalUrl = URL.createObjectURL(file);
   els.originalPreview.src = state.originalUrl;
-  els.originalMeta.innerHTML = `<b>${state.width}×${state.height}</b> · ${fmtBytes(file.size)} · ${file.name}`;
+  els.originalPreview.alt = file.name;
+  els.originalMeta.replaceChildren(
+    strong(`${source.width}×${source.height}`),
+    document.createTextNode(` · ${fmtBytes(file.size)} · ${file.name}`),
+  );
 
   els.dropzone.hidden = true;
   els.workspace.hidden = false;
-  els.progress.hidden = true;
-  els.progressText.textContent = '';
+  document.body.classList.add('has-image');
+  els.status.hidden = true;
+  els.statusText.textContent = '';
   els.barFill.style.width = '0%';
+  els.bar.classList.remove('is-indeterminate');
 
-  syncHint();
   setBusy(false);
+  updateHint();
 }
 
 function reset() {
   state.token++;
-  state.busy = false;
+  setBusy(false);
+  state.error = '';
   clearResult();
   clearSource();
+
   els.workspace.hidden = true;
   els.dropzone.hidden = false;
-  els.progress.hidden = true;
-  els.progressText.textContent = '';
+  document.body.classList.remove('has-image');
+  els.status.hidden = true;
+  els.statusText.textContent = '';
   els.barFill.style.width = '0%';
+  els.bar.classList.remove('is-indeterminate');
   els.hint.textContent = '';
   els.hint.classList.remove('is-error');
   els.fileInput.value = '';
-  setBusy(false);
+  updateButtons();
+}
+
+async function showResult({ blob, tag, label, seconds }) {
+  if (state.result?.url) URL.revokeObjectURL(state.result.url);
+
+  const url = URL.createObjectURL(blob);
+  const img = els.resultPreview;
+  img.src = url;
+  await img.decode().catch(() => { /* dimensions stay 0 if decoding fails */ });
+
+  state.result = {
+    blob,
+    url,
+    tag,
+    label,
+    seconds,
+    w: img.naturalWidth,
+    h: img.naturalHeight,
+  };
+  state.error = '';
+
+  const ext = extOf(blob);
+  els.resultMeta.replaceChildren(
+    strong(`${img.naturalWidth}×${img.naturalHeight}`),
+    document.createTextNode(` · ${ext.toUpperCase()} · ${fmtBytes(blob.size)}`),
+  );
+
+  els.downloadLabel.textContent = `Download ${ext.toUpperCase()}`;
+  els.btnDownload.hidden = false;
+  els.btnDownload.classList.remove('is-saved');
+
+  els.linkFull.href = url;
+  els.resultLinks.hidden = false;
+  els.btnFour.hidden = !(tag === '2x' && !tooBig(outputSize(4)));
+
+  els.resultPane.hidden = false;
+  els.panes.classList.add('has-result');
+  els.studio.classList.add('has-result');
+
+  els.status.hidden = false;
+  els.statusText.textContent = `${label} · ${seconds}s`;
+  els.barFill.style.width = '100%';
+
+  updateButtons();
+  updateHint();
+
+  if (matchMedia('(max-width: 820px)').matches) {
+    els.resultPane.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
 }
 
 /* ------------------------------------------------------------------ */
 /*  Actions                                                            */
 /* ------------------------------------------------------------------ */
 
-function outputSize(scale = state.scale) {
-  return {
-    w: Math.round(state.width * scale),
-    h: Math.round(state.height * scale),
-  };
-}
-
-function tooBig({ w, h }) {
-  return w > MAX_SIDE || h > MAX_SIDE || (w * h) / 1e6 > MAX_OUTPUT_MP;
-}
-
-function syncHint() {
-  if (!state.file) { els.hint.textContent = ''; return; }
-  const out = outputSize();
-  const over = tooBig(out);
-
-  els.hint.classList.toggle('is-error', over);
-  els.hint.innerHTML = over
-    ? `${state.scale}× would be ${out.w}×${out.h} px — past the ${MAX_OUTPUT_MP} MP limit. Use 2×.`
-    : `Original <b>${state.width}×${state.height}</b> px. Upscaling ${state.scale}× gives <b>${out.w}×${out.h}</b> px. Background removal keeps the original size.`;
-
-  els.btnUpscale.disabled = state.busy || over;
-}
-
-async function showResult(blob, tag, label) {
-  if (state.result?.url) URL.revokeObjectURL(state.result.url);
-
-  const url = URL.createObjectURL(blob);
-  const img = els.resultPreview;
-  img.src = url;
-  await img.decode().catch(() => { /* naturalWidth stays 0 if decode fails */ });
-
-  state.result = { blob, url, tag };
-
-  const ext = blob.type === 'image/png' ? 'png' : 'jpg';
-  els.resultMeta.innerHTML = `<b>${img.naturalWidth || '?'}×${img.naturalHeight || '?'}</b> · ${ext.toUpperCase()} · ${fmtBytes(blob.size)}`;
-  els.resultPane.hidden = false;
-  els.panes.classList.add('has-result');
-  els.btnDownload.hidden = false;
-  els.btnDownload.textContent = `Download ${ext.toUpperCase()}`;
-
-  els.progressText.textContent = `${label} — press Download to save it.`;
-}
-
-async function upscale() {
+async function upscale(scale = DEFAULT_SCALE) {
   if (!state.file || state.busy) return;
 
-  const scale = state.scale;
   const out = outputSize(scale);
-  if (tooBig(out)) { syncHint(); return; }
+  if (tooBig(out)) {
+    state.error = `${scale}× would be ${out.w}×${out.h} px — past the ${MAX_OUTPUT_MP} MP limit.`;
+    updateHint();
+    return;
+  }
 
   const token = startJob(`Upscaling ${scale}× with Lanczos`);
   const t0 = performance.now();
@@ -359,14 +455,18 @@ async function upscale() {
     });
     if (token !== state.token) return;
 
-    const hasAlpha = hasTransparency(dst);
-    const blob = hasAlpha
+    const blob = hasTransparency(dst)
       ? await canvasToBlob(dst, 'image/png')
       : await canvasToBlob(dst, 'image/jpeg', 0.92);
     if (token !== state.token) return;
 
-    setProgress(100, `Upscaled ${scale}× in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
-    await showResult(blob, `${scale}x`, `Upscaled ${scale}×`);
+    setProgress(100, `Upscaled ${scale}×`);
+    await showResult({
+      blob,
+      tag: `${scale}x`,
+      label: `Upscaled ${scale}×`,
+      seconds: ((performance.now() - t0) / 1000).toFixed(1),
+    });
   } catch (err) {
     if (token === state.token) failJob(err);
   } finally {
@@ -392,21 +492,28 @@ function runInWorker(file, onProgress) {
     }
     const w = worker;
 
-    const onMessage = event => {
-      const data = event.data || {};
-      if (data.type === 'progress' || data.type === 'status') onProgress(data);
-      else if (data.type === 'done') { cleanup(); resolve(data.blob); }
-      else if (data.type === 'error') { cleanup(); reject(new Error(data.message || 'Background removal failed')); }
-    };
-    const onError = event => {
-      cleanup();
-      try { w.terminate(); } catch { /* already gone */ }
-      if (worker === w) worker = null;
-      reject(new Error(event.message || 'The worker could not start'));
-    };
-    function cleanup() {
+    const finish = () => {
       w.removeEventListener('message', onMessage);
       w.removeEventListener('error', onError);
+    };
+    const drop = () => {
+      try { w.terminate(); } catch { /* already gone */ }
+      if (worker === w) worker = null;
+    };
+    function onMessage(event) {
+      const data = event.data || {};
+      if (data.type === 'progress' || data.type === 'status') { onProgress(data); return; }
+      finish();
+      if (data.type === 'done') resolve(data.blob);
+      else if (data.type === 'error') {
+        drop();                       // a fresh worker retries the import cleanly
+        reject(new Error(data.message || 'Background removal failed'));
+      }
+    }
+    function onError(event) {
+      finish();
+      drop();
+      reject(new Error(event.message || 'The worker could not start'));
     }
 
     w.addEventListener('message', onMessage);
@@ -464,7 +571,7 @@ async function removeByColor(source) {
   for (let y = 0; y < h; y += step) { sample(0, y); sample(w - 1, y); }
 
   const br = n ? sr / n : 255;
-  const bg = n ? sg / n : 255;
+  const bgc = n ? sg / n : 255;
   const bb = n ? sb / n : 255;
 
   const tol2 = COLOUR_TOLERANCE * COLOUR_TOLERANCE * 3;
@@ -474,7 +581,7 @@ async function removeByColor(source) {
     const p = y * w + x;
     if (mask[p]) return;
     const i = p * 4;
-    const dr = d[i] - br, dg = d[i + 1] - bg, db = d[i + 2] - bb;
+    const dr = d[i] - br, dg = d[i + 1] - bgc, db = d[i + 2] - bb;
     if (dr * dr + dg * dg + db * db > tol2) return;
     mask[p] = 1;
     stack.push(p);
@@ -524,6 +631,7 @@ async function removeByColor(source) {
 async function cutout() {
   if (!state.file || state.busy) return;
   const token = startJob('Removing the background');
+  const t0 = performance.now();
 
   try {
     let blob;
@@ -538,7 +646,12 @@ async function cutout() {
     if (token !== state.token) return;
 
     setProgress(100, 'Background removed');
-    await showResult(blob, 'no-bg', 'Background removed');
+    await showResult({
+      blob,
+      tag: 'no-bg',
+      label: 'Background removed',
+      seconds: ((performance.now() - t0) / 1000).toFixed(1),
+    });
   } catch (err) {
     if (token === state.token) failJob(err);
   } finally {
@@ -550,26 +663,25 @@ async function cutout() {
 /*  Wiring                                                             */
 /* ------------------------------------------------------------------ */
 
-els.btnUpscale.addEventListener('click', upscale);
+els.btnUpscale.addEventListener('click', () => upscale(DEFAULT_SCALE));
 els.btnBg.addEventListener('click', cutout);
 els.btnReset.addEventListener('click', reset);
+els.btnFour.addEventListener('click', () => upscale(4));
 
 els.btnDownload.addEventListener('click', () => {
   const r = state.result;
   if (!r) return;
-  const ext = r.blob.type === 'image/png' ? 'png' : 'jpg';
-  download(r.blob, `${baseName(state.file?.name)}_${r.tag}.${ext}`);
-});
+  download(r.blob, filenameFor(r));
 
-els.segs.forEach(btn => btn.addEventListener('click', () => {
-  state.scale = Number(btn.dataset.scale) || 2;
-  els.segs.forEach(b => {
-    const on = b === btn;
-    b.classList.toggle('is-active', on);
-    b.setAttribute('aria-pressed', String(on));
-  });
-  syncHint();
-}));
+  const ext = extOf(r.blob);
+  clearTimeout(savedTimer);
+  els.btnDownload.classList.add('is-saved');
+  els.downloadLabel.textContent = 'Saved';
+  savedTimer = setTimeout(() => {
+    els.btnDownload.classList.remove('is-saved');
+    els.downloadLabel.textContent = `Download ${ext.toUpperCase()}`;
+  }, 1600);
+});
 
 els.fileInput.addEventListener('change', () => {
   const file = els.fileInput.files?.[0];
@@ -585,6 +697,7 @@ els.dropzone.addEventListener('click', e => {
   if (e.target === els.fileInput) return;
   openPicker();
 });
+
 els.dropzone.addEventListener('keydown', e => {
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault();
@@ -592,7 +705,7 @@ els.dropzone.addEventListener('keydown', e => {
   }
 });
 
-// Whole page is a drop target: no "drop it on the small box" guessing.
+/* Whole page is a drop target — no aiming at a small box. */
 let dragDepth = 0;
 
 const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
@@ -644,5 +757,24 @@ document.addEventListener('paste', e => {
   toast('Image pasted from the clipboard.');
 });
 
-// Hint line reflects the current scale choice.
-syncHint();
+document.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (!state.file) return;
+
+  const key = e.key.toLowerCase();
+  if (key === 'u') { e.preventDefault(); upscale(DEFAULT_SCALE); }
+  else if (key === 'b') { e.preventDefault(); cutout(); }
+  else if (key === 'd' && state.result) { e.preventDefault(); els.btnDownload.click(); }
+});
+
+/* Mac users get ⌘V instead of Ctrl+V in the paste hint. */
+if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
+  const hint = $('#pasteHint');
+  if (hint) hint.innerHTML = '<kbd>⌘</kbd><kbd>V</kbd>';
+}
+
+/* First paint */
+updateButtons();
+updateHint();

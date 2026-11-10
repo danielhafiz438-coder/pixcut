@@ -9,18 +9,23 @@ processing happens in the visitor's browser — no uploads, no accounts, no anal
 
 1. Drop an image anywhere on the page (or click the drop zone, or press <kbd>Ctrl</kbd>+<kbd>V</kbd>).
 2. The original shows up as a preview, with its pixel size and file size.
-3. Press **Upscale** (2× or 4×) or **Remove background**.
+3. Press **Upscale** (2×) or **Remove background** — one button, no settings.
 4. The result appears next to the original, over a transparency checkerboard.
-5. Press **Download** — the file name carries the operation, e.g. `photo_2x.jpg` or `photo_no-bg.png`.
-6. **Start over** clears everything; dropping another image replaces the current one.
+5. **Download** sits in the result header; the file name carries the operation,
+   e.g. `photo_2x.jpg` or `photo_no-bg.png`.
+6. Need more resolution? **Try 4× instead** re-runs from the original. **Open full size**
+   opens the result in a new tab to check it at 100%.
+7. **Start over** clears everything; dropping another image replaces the current one.
 
-There are no option panels: the only choice left is 2× / 4×. Sharpening, encoding and the
-cut-out mode are picked automatically.
+Shortcuts: <kbd>U</kbd> upscale, <kbd>B</kbd> background, <kbd>D</kbd> download.
+
+Sharpening, encoding and the cut-out mode are picked automatically.
 
 ## What each action does
 
-- **Upscale** — Lanczos resampling with an unsharp mask (pica), 2× or 4×. Instant, no model
-  download. PNG out when the source has transparency, JPEG (q 0.92) otherwise.
+- **Upscale** — Lanczos resampling with an unsharp mask (pica), 2× by default and 4× on
+  request from the result. Instant, no model download. PNG out when the source has
+  transparency, JPEG (q 0.92) otherwise.
 - **Remove background** — ISNet segmentation (`@imgly/background-removal`) inside a module
   worker so the UI stays responsive; the ~40 MB model is downloaded once and cached by the
   browser. If the model cannot load (offline, blocked CDN), it falls back automatically to a
@@ -55,6 +60,19 @@ Static hosting, no build step.
 
 **Netlify** — `netlify.toml` already sets `publish = "."`; import the repo or run
 `npx netlify deploy --prod --dir=.`.
+
+## Interface notes
+
+- Liquid-glass surfaces over an aurora backdrop, one accent colour, system font stack — no
+  webfont to download.
+- Light and dark themes follow `prefers-color-scheme`; every text pair clears WCAG AA
+  (body 16.5:1 light / 17.5:1 dark, muted labels 6.4:1 / 7.5:1, links 6.8:1 / 11.5:1).
+- One primary action per state: before a result it is Upscale, afterwards it is the
+  Download button in the result header (Upscale steps back to a secondary style).
+- Every control is keyboard reachable with a visible focus ring; the drop zone is a real
+  button (`role="button"`, Enter/Space) and progress is announced through `aria-live`.
+- Motion is limited to a 300 ms result reveal and is disabled under
+  `prefers-reduced-motion`.
 
 ## Limits
 

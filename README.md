@@ -9,7 +9,8 @@ processing happens in the visitor's browser — no uploads, no accounts, no anal
 
 1. Drop an image anywhere on the page (or click the drop zone, or press <kbd>Ctrl</kbd>+<kbd>V</kbd>).
 2. The original shows up as a preview, with its pixel size and file size.
-3. Press **Upscale** (2×) or **Remove background** — one button, no settings.
+3. Press **Upscale 2×** (instant), **AI enhance** (slower, rebuilds detail) or **Remove background**
+   — one button each, no settings.
 4. The result appears next to the original, over a transparency checkerboard.
 5. **Download** sits in the result header; the file name carries the operation,
    e.g. `photo_2x.jpg` or `photo_no-bg.png`.
@@ -23,9 +24,16 @@ Sharpening, encoding and the cut-out mode are picked automatically.
 
 ## What each action does
 
-- **Upscale** — Lanczos resampling with an unsharp mask (pica), 2× by default and 4× on
-  request from the result. Instant, no model download. PNG out when the source has
-  transparency, JPEG (q 0.92) otherwise.
+- **Upscale 2×** — Lanczos resampling with an unsharp mask (pica). About a second, no model
+  download. It adds pixels and edge contrast; it cannot invent detail that was never captured.
+  PNG out when the source has transparency, JPEG (q 0.92) otherwise.
+- **AI enhance** — ESRGAN super-resolution (UpscalerJS, WebGL) in 256 px tiles with 32 px
+  overlap. It rebuilds edges and fine texture instead of interpolating, so it looks sharper and
+  more natural than resampling on photos. Slower: measured about 18 s per megapixel in Chrome
+  on a laptop GPU (~10 s for a 0.5 MP image), capped at 6 MP — roughly two minutes for the
+  largest allowed photo — with tile progress and a Cancel button. The model is ~1 MB and is
+  cached by the browser after the first run. PNG out when the source has transparency
+  (alpha is resampled separately), otherwise JPEG q 0.94.
 - **Remove background** — ISNet segmentation (`@imgly/background-removal`) inside a module
   worker so the UI stays responsive; the ~40 MB model is downloaded once and cached by the
   browser. If the model cannot load (offline, blocked CDN), it falls back automatically to a
@@ -77,6 +85,7 @@ Static hosting, no build step.
 ## Limits
 
 - Input: 48 MP per image (memory, not patience).
+- AI enhance: 6 MP input (time, not memory) — 2× output, tile progress, cancellable.
 - Output: 192 MP and 16384 px on the longest side — 2× of a 48 MP photo fits, 4× does not.
   The hint under the toolbar shows the exact output size, and Upscale is disabled when the
   chosen factor would exceed the cap.

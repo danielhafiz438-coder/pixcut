@@ -97,6 +97,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15V6a2 2 0 012-2h9"/><path d="M20 9v9a2 2 0 01-2 2H9"/><path d="M9 15l6-6m0 0h-4m4 0v4"/></svg>
           Upscale 2×
         </button>
+        <button class="btn-secondary btn-ai" id="btnAi" type="button" title="AI super-resolution: rebuilds detail instead of interpolating. Slower.">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z"/></svg>
+          AI enhance
+        </button>
         <button class="btn-secondary" id="btnBg" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l6.5-6.5"/><path d="M4 4h6l10 10v6h-6L4 10z"/></svg>
           Remove background
@@ -106,13 +110,16 @@
 
       <div class="status" id="status" hidden>
         <div class="bar" id="bar"><i id="barFill"></i></div>
-        <p class="status-text" id="statusText" role="status" aria-live="polite"></p>
+        <div class="status-row">
+          <p class="status-text" id="statusText" role="status" aria-live="polite"></p>
+          <button class="linklike" id="btnCancel" type="button" hidden>Cancel</button>
+        </div>
       </div>
 
       <p class="hint" id="hint"></p>
 
       <p class="shortcuts" id="shortcuts">
-        <kbd>U</kbd> upscale <kbd>B</kbd> background <kbd>D</kbd> download
+        <kbd>U</kbd> upscale <kbd>A</kbd> AI <kbd>B</kbd> background <kbd>D</kbd> download
       </p>
     </div>
 

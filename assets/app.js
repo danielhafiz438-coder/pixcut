@@ -12,6 +12,10 @@ const MAX_SIDE = 16384;       // max canvas side on this class of GPU
 const SHARPEN = 35;           // fixed unsharp strength for the Lanczos path
 const COLOUR_TOLERANCE = 24;  // flood-fill tolerance for the colour fallback
 const BG_CDN = 'https://esm.sh/@imgly/background-removal@1.7.0';
+const AI_CDN_SR = 'https://cdn.jsdelivr.net/npm/upscaler@1.0.0/+esm';
+const AI_MAX_MP = 6;          // AI enhance is minutes per megapixel, so cap at 6
+const AI_TILE = 256;          // input tile size for the super-resolution model
+const AI_OVERLAP = 32;        // tile overlap so seams disappear
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -35,8 +39,10 @@ const els = {
   btnDownload: $('#btnDownload'),
   downloadLabel: $('#downloadLabel'),
   btnUpscale: $('#btnUpscale'),
+  btnAi: $('#btnAi'),
   btnBg: $('#btnBg'),
   btnReset: $('#btnReset'),
+  btnCancel: $('#btnCancel'),
   status: $('#status'),
   bar: $('#bar'),
   barFill: $('#barFill'),
@@ -186,7 +192,9 @@ let savedTimer = null;
 
 function updateButtons() {
   const idle = !state.busy && !!state.file;
+  const aiTooBig = (state.width * state.height) / 1e6 > AI_MAX_MP;
   els.btnUpscale.disabled = !idle || tooBig(outputSize(DEFAULT_SCALE));
+  els.btnAi.disabled = !idle || aiTooBig || tooBig(outputSize(DEFAULT_SCALE));
   els.btnBg.disabled = !idle;
   els.btnReset.disabled = !state.file || state.busy;
   els.btnDownload.disabled = state.busy || !state.result;
@@ -205,6 +213,7 @@ function startJob(text) {
 
   setBusy(true);
   els.status.hidden = false;
+  els.btnCancel.hidden = false;
   els.statusText.textContent = text;
   els.bar.classList.add('is-indeterminate');
   els.barFill.style.width = '38%';
@@ -231,6 +240,7 @@ function endJob(token) {
   if (token !== state.token) return;
   clearInterval(tickTimer);
   tickTimer = null;
+  els.btnCancel.hidden = true;
   setBusy(false);
   els.bar.classList.remove('is-indeterminate');
   if (!state.error) els.barFill.style.width = '100%';
@@ -239,11 +249,31 @@ function endJob(token) {
 function failJob(err) {
   clearInterval(tickTimer);
   tickTimer = null;
+  els.btnCancel.hidden = true;
   els.bar.classList.remove('is-indeterminate');
   els.barFill.style.width = '0%';
   els.statusText.textContent = 'Failed';
   state.error = err?.message || String(err);
   updateHint();
+}
+
+/** Stop whatever is running, keep the image, ignore the pending result. */
+function cancelJob() {
+  if (!state.busy) return;
+  state.token++;
+  clearInterval(tickTimer);
+  tickTimer = null;
+
+  if (worker) {
+    try { worker.terminate(); } catch { /* already gone */ }
+    worker = null;
+  }
+
+  setBusy(false);
+  els.btnCancel.hidden = true;
+  els.bar.classList.remove('is-indeterminate');
+  els.barFill.style.width = '0%';
+  els.statusText.textContent = 'Cancelled — nothing was changed.';
 }
 
 /* ------------------------------------------------------------------ */
@@ -276,8 +306,11 @@ function updateHint() {
     return;
   }
   const out = outputSize(DEFAULT_SCALE);
-  hint.innerHTML = `Original <b>${state.width}×${state.height}</b> px · upscaling 2× gives `
-    + `<b>${out.w}×${out.h}</b> px · background removal keeps the original size.`;
+  const aiNote = (state.width * state.height) / 1e6 > AI_MAX_MP
+    ? ` · AI enhance needs ≤ ${AI_MAX_MP} MP`
+    : ' · AI enhance is slower but rebuilds detail instead of blurring';
+  hint.innerHTML = `Original <b>${state.width}×${state.height}</b> px · Upscale 2× → `
+    + `<b>${out.w}×${out.h}</b> px in about a second${aiNote}.`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -465,6 +498,201 @@ async function upscale(scale = DEFAULT_SCALE) {
       blob,
       tag: `${scale}x`,
       label: `Upscaled ${scale}×`,
+      seconds: ((performance.now() - t0) / 1000).toFixed(1),
+    });
+  } catch (err) {
+    if (token === state.token) failJob(err);
+  } finally {
+    endJob(token);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI enhance — ESRGAN super-resolution, tiled                       */
+/* ------------------------------------------------------------------ */
+
+let upscalerPromise = null;
+
+const normaliseUpscaler = mod => {
+  if (typeof mod?.default === 'function') return mod.default;
+  if (typeof mod?.Upscaler === 'function') return mod.Upscaler;
+  if (typeof mod?.default?.default === 'function') return mod.default.default;
+  throw new Error('The AI module loaded in an unexpected shape');
+};
+
+function getUpscaler() {
+  if (!upscalerPromise) {
+    upscalerPromise = import(AI_CDN_SR)
+      .then(normaliseUpscaler)
+      .catch(() => {
+        upscalerPromise = null;
+        throw new Error('The AI model could not be downloaded — check your connection, or use Upscale 2×.');
+      });
+  }
+  return upscalerPromise;
+}
+
+const dataUrlToBlob = url => {
+  const comma = url.indexOf(',');
+  const mime = (url.slice(0, comma).match(/:(.*?);/) || [, 'image/png'])[1];
+  const bin = atob(url.slice(comma + 1));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+};
+
+const imageFromUrl = url => createImageBitmap(dataUrlToBlob(url));
+
+const nextFrame = () => new Promise(r => setTimeout(r, 16));
+
+/**
+ * Tile the source, upscale each tile 2×, and stitch only the tiles' centres so
+ * the overlaps hide the seams. A fresh Upscaler per tile avoids a WebGL
+ * deadlock seen on some Intel drivers after the first inference.
+ */
+async function aiUpscale(src, Upscaler, onProgress, shouldStop) {
+  const W = src.width;
+  const H = src.height;
+  const S = 2;
+  const STEP = AI_TILE - AI_OVERLAP;
+  const cols = Math.max(1, Math.ceil((W - AI_TILE) / STEP) + 1);
+  const rows = Math.max(1, Math.ceil((H - AI_TILE) / STEP) + 1);
+  const pw = (cols - 1) * STEP + AI_TILE;
+  const ph = (rows - 1) * STEP + AI_TILE;
+
+  const padded = document.createElement('canvas');
+  padded.width = pw;
+  padded.height = ph;
+  const pctx = padded.getContext('2d');
+  pctx.drawImage(src, 0, 0);
+  // Extend the edge pixels so the model never sees a transparent void.
+  if (pw > W) pctx.drawImage(src, W - 1, 0, 1, H, W, 0, pw - W, H);
+  if (ph > H) pctx.drawImage(src, 0, H - 1, W, 1, 0, H, W, ph - H);
+  if (pw > W && ph > H) pctx.drawImage(src, W - 1, H - 1, 1, 1, W, H, pw - W, ph - H);
+
+  const out = document.createElement('canvas');
+  out.width = W * S;
+  out.height = H * S;
+  const octx = out.getContext('2d');
+
+  const half = AI_OVERLAP / 2;
+  const total = cols * rows;
+  let done = 0;
+  onProgress(0, total);
+
+  for (let ty = 0; ty < rows; ty++) {
+    for (let tx = 0; tx < cols; tx++) {
+      if (shouldStop()) throw new Error('Cancelled');
+      const x0 = tx * STEP;
+      const y0 = ty * STEP;
+
+      const tile = document.createElement('canvas');
+      tile.width = AI_TILE;
+      tile.height = AI_TILE;
+      tile.getContext('2d').drawImage(padded, x0, y0, AI_TILE, AI_TILE, 0, 0, AI_TILE, AI_TILE);
+
+      const upscaler = new Upscaler();
+      let dataUrl;
+      try {
+        await upscaler.warmup?.();
+        dataUrl = await upscaler.upscale(tile);
+      } finally {
+        try { upscaler.dispose?.(); } catch { /* already gone */ }
+      }
+
+      const img = await imageFromUrl(dataUrl);
+      const ratio = img.width / AI_TILE;
+
+      const sX = x0 + (x0 === 0 ? 0 : half);
+      const sY = y0 + (y0 === 0 ? 0 : half);
+      const eX = Math.min(x0 + AI_TILE - (x0 + AI_TILE >= pw ? 0 : half), W);
+      const eY = Math.min(y0 + AI_TILE - (y0 + AI_TILE >= ph ? 0 : half), H);
+
+      if (eX > sX && eY > sY) {
+        octx.drawImage(
+          img,
+          (sX - x0) * ratio, (sY - y0) * ratio, (eX - sX) * ratio, (eY - sY) * ratio,
+          sX * S, sY * S, (eX - sX) * S, (eY - sY) * S,
+        );
+      }
+      img.close?.();
+
+      done++;
+      onProgress(done, total);
+      await nextFrame();
+    }
+  }
+
+  // The model smears the outermost pixels; copy a 2px band inward.
+  const edge = 2;
+  if (out.width > edge * 2 && out.height > edge * 2) {
+    octx.drawImage(out, edge, 0, 1, out.height, 0, 0, edge, out.height);
+    octx.drawImage(out, out.width - edge - 1, 0, 1, out.height, out.width - edge, 0, edge, out.height);
+    octx.drawImage(out, 0, edge, out.width, 1, 0, 0, out.width, edge);
+    octx.drawImage(out, 0, out.height - edge - 1, out.width, 1, 0, out.height - edge, out.width, edge);
+  }
+  return out;
+}
+
+async function aiEnhance() {
+  if (!state.file || state.busy) return;
+
+  const mp = (state.width * state.height) / 1e6;
+  if (mp > AI_MAX_MP) {
+    state.error = `AI enhance is limited to ${AI_MAX_MP} MP (this image is ${mp.toFixed(1)} MP) — use Upscale 2× instead.`;
+    updateHint();
+    return;
+  }
+  const out = outputSize(2);
+  if (tooBig(out)) {
+    state.error = `2× would be ${out.w}×${out.h} px — past the ${MAX_OUTPUT_MP} MP limit.`;
+    updateHint();
+    return;
+  }
+
+  const token = startJob('Loading the AI model');
+  const t0 = performance.now();
+
+  try {
+    const Upscaler = await getUpscaler();
+    if (token !== state.token) return;
+
+    const hasAlpha = hasTransparency(state.source);
+    setProgress(4, 'Enhancing — first tile…');
+
+    const canvas = await aiUpscale(
+      state.source,
+      Upscaler,
+      (done, total) => {
+        if (token !== state.token) return;
+        setProgress(3 + (done / total) * 92, `AI tile ${done}/${total} · ${((performance.now() - t0) / 1000).toFixed(0)}s`);
+      },
+      () => token !== state.token,
+    );
+    if (token !== state.token) return;
+
+    if (hasAlpha) {
+      // The model works on RGB only; bring the alpha back through pica.
+      const alpha = document.createElement('canvas');
+      alpha.width = canvas.width;
+      alpha.height = canvas.height;
+      await pica.resize(state.source, alpha);
+      const ctx = canvas.getContext('2d');
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(alpha, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    const blob = hasAlpha
+      ? await canvasToBlob(canvas, 'image/png')
+      : await canvasToBlob(canvas, 'image/jpeg', 0.94);
+    if (token !== state.token) return;
+
+    setProgress(100, 'AI enhance done');
+    await showResult({
+      blob,
+      tag: 'ai2x',
+      label: 'AI enhanced 2×',
       seconds: ((performance.now() - t0) / 1000).toFixed(1),
     });
   } catch (err) {
@@ -664,9 +892,11 @@ async function cutout() {
 /* ------------------------------------------------------------------ */
 
 els.btnUpscale.addEventListener('click', () => upscale(DEFAULT_SCALE));
+els.btnAi.addEventListener('click', aiEnhance);
 els.btnBg.addEventListener('click', cutout);
 els.btnReset.addEventListener('click', reset);
 els.btnFour.addEventListener('click', () => upscale(4));
+els.btnCancel.addEventListener('click', cancelJob);
 
 els.btnDownload.addEventListener('click', () => {
   const r = state.result;
@@ -765,6 +995,7 @@ document.addEventListener('keydown', e => {
 
   const key = e.key.toLowerCase();
   if (key === 'u') { e.preventDefault(); upscale(DEFAULT_SCALE); }
+  else if (key === 'a') { e.preventDefault(); aiEnhance(); }
   else if (key === 'b') { e.preventDefault(); cutout(); }
   else if (key === 'd' && state.result) { e.preventDefault(); els.btnDownload.click(); }
 });

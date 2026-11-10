@@ -1,56 +1,63 @@
 import Pica from './pica.min.mjs';
 
+/* ------------------------------------------------------------------ */
+/*  Config                                                             */
+/* ------------------------------------------------------------------ */
+
 const REPO_URL = 'https://github.com/danielhafiz438-coder/pixcut';
-const MAX_INPUT_MP = 48;          // had input untuk naik taraf (Lanczos)
-const MAX_OUTPUT_MP = 192;        // had output — 2× foto 48 MP masih muat
-const MAX_SIDE = 16384;           // sisi maksimum canvas pada GPU ini
-const AI_CDN = 'https://esm.sh/@imgly/background-removal@1.7.0';
+const MAX_INPUT_MP = 48;      // input cap (memory, not time)
+const MAX_OUTPUT_MP = 192;    // 2× of a 48 MP photo still fits
+const MAX_SIDE = 16384;       // max canvas side on this class of GPU
+const SHARPEN = 35;           // fixed unsharp strength for the Lanczos path
+const COLOUR_TOLERANCE = 24;  // flood-fill tolerance for the colour fallback
+const BG_CDN = 'https://esm.sh/@imgly/background-removal@1.7.0';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const pica = new Pica();
-let repoLink = $('#repoLink');
-if (repoLink) repoLink.href = REPO_URL;
 
-/* ------------------------------------------------------------------ */
-/*  Tab                                                                */
-/* ------------------------------------------------------------------ */
-
-const HERO = {
-  upscale: {
-    title: 'Upscale image',
-    sub: 'Increase resolution up to 4× with a local AI model or Lanczos resampling, right in your browser.',
-  },
-  bg: {
-    title: 'Remove background',
-    sub: 'Cut out the subject from JPG and PNG images with a segmentation model that runs on your device.',
-  },
+const els = {
+  studio: $('#studio'),
+  dropzone: $('#dropzone'),
+  fileInput: $('#fileInput'),
+  workspace: $('#workspace'),
+  panes: $('#panes'),
+  originalPreview: $('#originalPreview'),
+  originalMeta: $('#originalMeta'),
+  resultPane: $('#resultPane'),
+  resultPreview: $('#resultPreview'),
+  resultMeta: $('#resultMeta'),
+  progress: $('#progress'),
+  bar: $('#bar'),
+  barFill: $('#barFill'),
+  progressText: $('#progressText'),
+  scaleSeg: $('#scaleSeg'),
+  segs: $$('#scaleSeg .seg'),
+  btnUpscale: $('#btnUpscale'),
+  btnBg: $('#btnBg'),
+  btnDownload: $('#btnDownload'),
+  btnReset: $('#btnReset'),
+  hint: $('#hint'),
+  dropOverlay: $('#dropOverlay'),
 };
 
-function setTab(name) {
-  $$('.navitem[data-tab]').forEach(t => {
-    const on = t.dataset.tab === name;
-    t.classList.toggle('is-active', on);
-    t.setAttribute('aria-selected', String(on));
-  });
-  $$('.tool-panel').forEach(p => {
-    const on = p.id === `panel-${name}`;
-    p.classList.toggle('is-active', on);
-    p.hidden = !on;
-  });
-  const hero = HERO[name] || HERO.upscale;
-  if ($('#heroTitle')) $('#heroTitle').textContent = hero.title;
-  if ($('#heroSub')) $('#heroSub').textContent = hero.sub;
-  if ($('#uploaderUpscale')) $('#uploaderUpscale').hidden = name !== 'upscale';
-  if ($('#uploaderBg')) $('#uploaderBg').hidden = name !== 'bg';
-}
-$$('.navitem[data-tab]').forEach(t => t.addEventListener('click', () => setTab(t.dataset.tab)));
-const initialTab = location.hash === '#bg' ? 'bg' : 'upscale';
-setTab(initialTab);
+const state = {
+  file: null,
+  source: null,      // canvas holding the decoded pixels
+  width: 0,
+  height: 0,
+  scale: 2,
+  result: null,      // { blob, url, tag }
+  originalUrl: null,
+  busy: false,
+  token: 0,
+};
+
+$('#repoLink').href = REPO_URL;
 
 /* ------------------------------------------------------------------ */
-/*  Util                                                               */
+/*  Small utilities                                                    */
 /* ------------------------------------------------------------------ */
 
 const fmtBytes = n => n < 1024
@@ -59,80 +66,12 @@ const fmtBytes = n => n < 1024
     ? `${(n / 1024).toFixed(0)} KB`
     : `${(n / 1048576).toFixed(1)} MB`;
 
-const baseName = name => name.replace(/\.[^.]+$/, '').replace(/[^\w\-. ]+/g, '_');
+const baseName = name => (name || 'image')
+  .replace(/\.[^.]+$/, '')
+  .replace(/[^\w\-. ]+/g, '_')
+  .slice(0, 60) || 'image';
 
-function download(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-}
-
-function canvasToBlob(canvas, type, quality) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(b => b ? resolve(b) : reject(new Error('Failed to encode image')), type, quality);
-  });
-}
-
-/** Semak sama ada imej benar-benar ada piksel lutsinar. */
-function hasTransparency(source) {
-  const probe = document.createElement('canvas');
-  probe.width = probe.height = 256;
-  const ctx = probe.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(source, 0, 0, 256, 256);
-  const d = ctx.getImageData(0, 0, 256, 256).data;
-  for (let i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
-  return false;
-}
-
-/** Isi trek slider ikut nilai semasa (--p dipakai oleh CSS). */
-function syncRangeFill(el) {
-  const min = Number(el.min || 0);
-  const max = Number(el.max || 100);
-  const pct = max > min ? ((Number(el.value) - min) / (max - min)) * 100 : 0;
-  el.style.setProperty('--p', `${pct}%`);
-}
-
-/** Sambungkan dropzone: klik, Enter/Space, drag & drop. */
-function wireDropzone(zone, input, onFiles) {
-  const open = () => input.click();
-  zone.addEventListener('click', open);
-  zone.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
-  });
-  input.addEventListener('change', () => {
-    if (input.files?.length) onFiles([...input.files]);
-    input.value = '';
-  });
-  let depth = 0;
-  ['dragenter', 'dragover'].forEach(evt =>
-    zone.addEventListener(evt, e => {
-      e.preventDefault();
-      if (evt === 'dragenter') depth++;
-      zone.classList.add('is-drag');
-    }));
-  ['dragleave', 'drop'].forEach(evt =>
-    zone.addEventListener(evt, e => {
-      e.preventDefault();
-      if (evt === 'dragleave' && --depth > 0) return;
-      depth = 0;
-      zone.classList.remove('is-drag');
-    }));
-  zone.addEventListener('drop', e => {
-    const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/'));
-    if (files.length) onFiles(files);
-  });
-}
-
-const loadBitmap = file => createImageBitmap(file);
-
-/* ------------------------------------------------------------------ */
-/*  Sumber input: butang bulat, tampal papan klip, notifikasi          */
-/* ------------------------------------------------------------------ */
+const clamp = (n, min = 0, max = 100) => Math.min(max, Math.max(min, n));
 
 let toastTimer = null;
 
@@ -147,640 +86,373 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('is-visible');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('is-visible'), 3200);
+  toastTimer = setTimeout(() => el.classList.remove('is-visible'), 3600);
 }
 
-function wireSourceButtons(input, pick, paste, onFiles) {
-  pick?.addEventListener('click', e => {
-    e.stopPropagation();
-    input.click();
-  });
-  paste?.addEventListener('click', async e => {
-    e.stopPropagation();
-    try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        const type = item.types.find(t => t.startsWith('image/'));
-        if (type) {
-          const blob = await item.getType(type);
-          onFiles([new File([blob], `tampal.${type.split('/')[1]}`, { type })]);
-          return;
-        }
-      }
-      toast('No image found in the clipboard.');
-    } catch {
-      toast('The browser blocked clipboard access — press Ctrl+V on this page instead.');
-    }
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      b => (b ? resolve(b) : reject(new Error('The browser could not encode the result — the image may be too large.'))),
+      type,
+      quality,
+    );
   });
 }
 
-/* ------------------------------------------------------------------ */
-/*  Alat 1 — Naik taraf imej                                           */
-/* ------------------------------------------------------------------ */
-
-const resultsEl = $('#resultsUpscale');
-const controlsU = $('#upscaleControls');
-const btnUpscale = $('#btnUpscale');
-const inputUpscale = $('#inputUpscale');
-
-let scale = 2;
-let sharpen = 35;
-let engine = 'lanczos';
-const queue = [];   // { id, file, status, blob, w, h, ow, oh, thumb }
-
-/** AI super-res sentiasa 2× (model dilatih pada skala itu). */
-const outScale = () => (engine === 'ai' ? 2 : scale);
-
-$$('#engineSeg .seg').forEach(b => b.addEventListener('click', () => {
-  $$('#engineSeg .seg').forEach(x => x.classList.toggle('is-active', x === b));
-  engine = b.dataset.engine;
-  $('#scaleControl').hidden = engine === 'ai';
-  $('#upscaleHint').innerHTML = engine === 'ai'
-    ? 'The AI engine uses an ESRGAN model (~1&nbsp;MB, downloaded once) that adds real detail instead of interpolating. Output is 2×. Input limit ' + AI_MAX_MP + '&nbsp;MP — a full photo can take several minutes.'
-    : 'Use 2× for large images, 4× for icons or small images. Input limit ' + MAX_INPUT_MP + '&nbsp;MP per image.';
-  updateDimLabels();
-  queue.forEach(renderRow);
-}));
-
-$$('#scaleSeg .seg').forEach(b => b.addEventListener('click', () => {
-  $$('#scaleSeg .seg').forEach(x => x.classList.toggle('is-active', x === b));
-  scale = Number(b.dataset.scale);
-  updateDimLabels();
-}));
-
-$('#sharpen').addEventListener('input', e => {
-  sharpen = Number(e.target.value);
-  $('#sharpenVal').textContent = sharpen;
-  syncRangeFill(e.target);
-});
-
-function updateDimLabels() {
-  queue.forEach(item => {
-    const meta = $(`#meta-${item.id}`);
-    if (meta && item.ow && item.status !== 'done' && item.status !== 'error') {
-      meta.innerHTML = dimHtml(item.ow, item.oh, item.ow * outScale(), item.oh * outScale());
-    }
-  });
+/** True when the image really contains transparent pixels. */
+function hasTransparency(source) {
+  const probe = document.createElement('canvas');
+  probe.width = probe.height = 256;
+  const ctx = probe.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(source, 0, 0, 256, 256);
+  const d = ctx.getImageData(0, 0, 256, 256).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
+  return false;
 }
 
-function dimHtml(ow, oh, nw, nh) {
-  return `<b>${ow}×${oh}</b> → <b>${nw}×${nh}</b>${nw * nh > 40e6 ? ' · large' : ''}`;
-}
-
-let seq = 0;
-let runToken = 0;
-
-function addFiles(files) {
-  const rejected = [];
-  for (const file of files) {
-    const item = { id: `r${++seq}`, file, status: 'queued', ow: 0, oh: 0, cancelled: false };
-    queue.push(item);
-    const li = document.createElement('li');
-    li.className = 'result';
-    li.id = `row-${item.id}`;
-    li.innerHTML = `
-      <div class="thumb"><img alt=""></div>
-      <div class="result-body">
-        <div class="result-name"></div>
-        <div class="result-meta" id="meta-${item.id}">Sedia</div>
-      </div>
-      <div class="result-action"></div>`;
-    $('.result-name', li).textContent = file.name;
-    resultsEl.appendChild(li);
-    renderRow(item);
-    inspectImage(item).catch(() => rejected.push(file.name));
-  }
-  controlsU.hidden = queue.length === 0;
-  if (rejected.length) console.warn('Could not read image:', rejected);
-}
-
-async function inspectImage(item) {
-  const bmp = await loadBitmap(item.file);
-  if (item.cancelled) { bmp.close?.(); return; }
-  item.ow = bmp.width;
-  item.oh = bmp.height;
-  item.bmp = bmp;
-  const mp = (bmp.width * bmp.height) / 1e6;
-  if (mp > MAX_INPUT_MP) {
-    item.status = 'error';
-    item.error = `Too large (${mp.toFixed(1)} MP, limit ${MAX_INPUT_MP} MP)`;
-  }
-  const thumb = $(`#row-${item.id} .thumb img`);
-  if (thumb) thumb.src = bmpToDataUrl(bmp, 54);
-  const meta = $(`#meta-${item.id}`);
-  if (item.status !== 'error' && meta) {
-    meta.innerHTML = dimHtml(bmp.width, bmp.height, bmp.width * outScale(), bmp.height * outScale());
-  }
-  renderRow(item);
-}
-
-function bmpToDataUrl(bmp, size) {
-  const c = document.createElement('canvas');
-  const s = Math.min(bmp.width, bmp.height);
-  c.width = c.height = size * 2;
-  const ctx = c.getContext('2d');
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(bmp, (bmp.width - s) / 2, (bmp.height - s) / 2, s, s, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.7);
-}
-
-function renderRow(item) {
-  const action = $(`#row-${item.id} .result-action`);
-  if (!action) return;
-  const meta = $(`#meta-${item.id}`);
-  if (item.status === 'error') {
-    if (meta) meta.textContent = item.error;
-    action.innerHTML = '';
-    return;
-  }
-  if (item.status === 'working') {
-    if (meta) meta.textContent = item.statusText || 'Processing…';
-    action.innerHTML = '<span class="spinner" role="status" aria-label="Processing"></span>';
-    return;
-  }
-  if (item.status === 'done') {
-    if (meta) {
-      meta.innerHTML = dimHtml(item.ow, item.oh, item.w, item.h) +
-        ` · result <b>${fmtBytes(item.blob.size)}</b>`;
-    }
-    action.innerHTML = '<button class="btn btn-primary" type="button">Download</button>';
-    $('button', action).addEventListener('click', () => {
-      const ext = item.blob.type === 'image/jpeg' ? 'jpg' : 'png';
-      download(item.blob, `${baseName(item.file.name)}_${item.scale}x${item.engineTag ? '-' + item.engineTag : ''}.${ext}`);
-    });
-    return;
-  }
-  action.innerHTML = '';
-}
-
-async function upscaleItem(item) {
-  if (item.status === 'error' || item.cancelled) return;
-  item.status = 'working';
-  item.statusText = 'Processing…';
-  renderRow(item);
-  if (engine === 'ai') return upscaleItemAI(item);
+/** Decode any image the browser understands into a canvas (single copy of the pixels). */
+async function decodeToCanvas(file) {
+  let bmp;
   try {
-    const bmp = item.bmp || await loadBitmap(item.file);
-    if (item.cancelled) return;
-    const w = Math.round(bmp.width * scale);
-    const h = Math.round(bmp.height * scale);
-    if (w > MAX_SIDE || h > MAX_SIDE || (w * h) / 1e6 > MAX_OUTPUT_MP) {
-      throw new Error(`Output too large (${w}×${h}). Limit is ${MAX_OUTPUT_MP} MP and ${MAX_SIDE}px a side — use 2× or a smaller image.`);
+    bmp = await createImageBitmap(file);
+  } catch {
+    // SVG and a few exotic formats only decode through <img>.
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.src = url;
+    try {
+      await img.decode();
+    } finally {
+      URL.revokeObjectURL(url);
     }
+    bmp = { width: img.naturalWidth, height: img.naturalHeight, draw: img };
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width;
+  canvas.height = bmp.height;
+  canvas.getContext('2d').drawImage(bmp.draw || bmp, 0, 0);
+  bmp.close?.();
+  return canvas;
+}
 
-    const src = document.createElement('canvas');
-    src.width = bmp.width;
-    src.height = bmp.height;
-    src.getContext('2d').drawImage(bmp, 0, 0);
+/* ------------------------------------------------------------------ */
+/*  Progress + busy state                                              */
+/* ------------------------------------------------------------------ */
 
+let tickTimer = null;
+
+function startJob(text, indeterminate = true) {
+  const token = ++state.token;
+  state.busy = true;
+  setBusy(true);
+
+  els.progress.hidden = false;
+  els.bar.classList.toggle('is-indeterminate', indeterminate);
+  els.barFill.style.width = indeterminate ? '38%' : '0%';
+  els.progressText.textContent = text;
+  els.hint.classList.remove('is-error');
+
+  const t0 = performance.now();
+  clearInterval(tickTimer);
+  tickTimer = setInterval(() => {
+    els.progressText.textContent = `${text} · ${((performance.now() - t0) / 1000).toFixed(0)}s`;
+  }, 300);
+
+  return token;
+}
+
+function setProgress(pct, text) {
+  clearInterval(tickTimer);
+  tickTimer = null;
+  els.bar.classList.remove('is-indeterminate');
+  els.barFill.style.width = `${clamp(pct)}%`;
+  if (text) els.progressText.textContent = text;
+}
+
+function endJob(token) {
+  if (token !== state.token) return;
+  clearInterval(tickTimer);
+  tickTimer = null;
+  state.busy = false;
+  setBusy(false);
+  els.bar.classList.remove('is-indeterminate');
+  els.barFill.style.width = '100%';
+  syncHint();
+}
+
+function failJob(err) {
+  clearInterval(tickTimer);
+  tickTimer = null;
+  els.bar.classList.remove('is-indeterminate');
+  els.barFill.style.width = '0%';
+  els.progressText.textContent = 'Failed';
+  els.hint.classList.add('is-error');
+  els.hint.textContent = err?.message || String(err);
+}
+
+function setBusy(busy) {
+  [els.btnUpscale, els.btnBg, els.btnReset, els.btnDownload, ...els.segs]
+    .forEach(b => { b.disabled = busy; });
+  if (!busy) syncHint();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Loading an image                                                   */
+/* ------------------------------------------------------------------ */
+
+function clearResult() {
+  if (state.result?.url) URL.revokeObjectURL(state.result.url);
+  state.result = null;
+  els.resultPane.hidden = true;
+  els.resultPreview.removeAttribute('src');
+  els.btnDownload.hidden = true;
+  els.panes.classList.remove('has-result');
+}
+
+function clearSource() {
+  state.source = null;
+  state.file = null;
+  state.width = state.height = 0;
+  if (state.originalUrl) {
+    URL.revokeObjectURL(state.originalUrl);
+    state.originalUrl = null;
+  }
+  els.originalPreview.removeAttribute('src');
+}
+
+async function loadFile(file) {
+  if (!file) return;
+  if (state.busy) { toast('Hold on — a job is still running.'); return; }
+  if (!file.type.startsWith('image/')) { toast('That file is not an image.'); return; }
+
+  let source;
+  try {
+    source = await decodeToCanvas(file);
+  } catch {
+    toast('This image could not be read. Try a JPG, PNG or WebP.');
+    return;
+  }
+
+  const mp = (source.width * source.height) / 1e6;
+  if (mp > MAX_INPUT_MP) {
+    toast(`Too large: ${mp.toFixed(1)} MP. The limit is ${MAX_INPUT_MP} MP.`);
+    return;
+  }
+
+  state.token++;              // cancel anything from the previous image
+  clearResult();
+  clearSource();
+
+  state.file = file;
+  state.source = source;
+  state.width = source.width;
+  state.height = source.height;
+
+  state.originalUrl = URL.createObjectURL(file);
+  els.originalPreview.src = state.originalUrl;
+  els.originalMeta.innerHTML = `<b>${state.width}×${state.height}</b> · ${fmtBytes(file.size)} · ${file.name}`;
+
+  els.dropzone.hidden = true;
+  els.workspace.hidden = false;
+  els.progress.hidden = true;
+  els.progressText.textContent = '';
+  els.barFill.style.width = '0%';
+
+  syncHint();
+  setBusy(false);
+}
+
+function reset() {
+  state.token++;
+  state.busy = false;
+  clearResult();
+  clearSource();
+  els.workspace.hidden = true;
+  els.dropzone.hidden = false;
+  els.progress.hidden = true;
+  els.progressText.textContent = '';
+  els.barFill.style.width = '0%';
+  els.hint.textContent = '';
+  els.hint.classList.remove('is-error');
+  els.fileInput.value = '';
+  setBusy(false);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Actions                                                            */
+/* ------------------------------------------------------------------ */
+
+function outputSize(scale = state.scale) {
+  return {
+    w: Math.round(state.width * scale),
+    h: Math.round(state.height * scale),
+  };
+}
+
+function tooBig({ w, h }) {
+  return w > MAX_SIDE || h > MAX_SIDE || (w * h) / 1e6 > MAX_OUTPUT_MP;
+}
+
+function syncHint() {
+  if (!state.file) { els.hint.textContent = ''; return; }
+  const out = outputSize();
+  const over = tooBig(out);
+
+  els.hint.classList.toggle('is-error', over);
+  els.hint.innerHTML = over
+    ? `${state.scale}× would be ${out.w}×${out.h} px — past the ${MAX_OUTPUT_MP} MP limit. Use 2×.`
+    : `Original <b>${state.width}×${state.height}</b> px. Upscaling ${state.scale}× gives <b>${out.w}×${out.h}</b> px. Background removal keeps the original size.`;
+
+  els.btnUpscale.disabled = state.busy || over;
+}
+
+async function showResult(blob, tag, label) {
+  if (state.result?.url) URL.revokeObjectURL(state.result.url);
+
+  const url = URL.createObjectURL(blob);
+  const img = els.resultPreview;
+  img.src = url;
+  await img.decode().catch(() => { /* naturalWidth stays 0 if decode fails */ });
+
+  state.result = { blob, url, tag };
+
+  const ext = blob.type === 'image/png' ? 'png' : 'jpg';
+  els.resultMeta.innerHTML = `<b>${img.naturalWidth || '?'}×${img.naturalHeight || '?'}</b> · ${ext.toUpperCase()} · ${fmtBytes(blob.size)}`;
+  els.resultPane.hidden = false;
+  els.panes.classList.add('has-result');
+  els.btnDownload.hidden = false;
+  els.btnDownload.textContent = `Download ${ext.toUpperCase()}`;
+
+  els.progressText.textContent = `${label} — press Download to save it.`;
+}
+
+async function upscale() {
+  if (!state.file || state.busy) return;
+
+  const scale = state.scale;
+  const out = outputSize(scale);
+  if (tooBig(out)) { syncHint(); return; }
+
+  const token = startJob(`Upscaling ${scale}× with Lanczos`);
+  const t0 = performance.now();
+
+  try {
     const dst = document.createElement('canvas');
-    dst.width = w;
-    dst.height = h;
+    dst.width = out.w;
+    dst.height = out.h;
 
-    await pica.resize(src, dst, {
-      unsharpAmount: Math.round(sharpen * 2.2),
+    await pica.resize(state.source, dst, {
+      unsharpAmount: Math.round(SHARPEN * 2.2),
       unsharpRadius: 0.6,
       unsharpThreshold: 2,
     });
-    if (item.cancelled) return;
+    if (token !== state.token) return;
 
     const hasAlpha = hasTransparency(dst);
     const blob = hasAlpha
       ? await canvasToBlob(dst, 'image/png')
       : await canvasToBlob(dst, 'image/jpeg', 0.92);
+    if (token !== state.token) return;
 
-    item.blob = blob;
-    item.scale = scale;
-    item.w = w;
-    item.h = h;
-    item.status = 'done';
+    setProgress(100, `Upscaled ${scale}× in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+    await showResult(blob, `${scale}x`, `Upscaled ${scale}×`);
   } catch (err) {
-    item.status = 'error';
-    item.error = err.message || 'Failed';
-  }
-  renderRow(item);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Enjin AI — Swin? Tidak: ESRGAN melalui UpscalerJS (TFJS/WebGL)     */
-/* ------------------------------------------------------------------ */
-
-const AI_MAX_MP = 12;         // had input untuk mod AI (masa, bukan memori)
-const AI_TILE = 256;          // saiz jubin input
-const AI_OVERLAP = 32;        // pertindihan antara jubin (elak garis sambung)
-const AI_CDN_SR = 'https://cdn.jsdelivr.net/npm/upscaler@1.0.0/+esm';
-
-let aiModulePromise = null;
-
-/** Import modul UpscalerJS (dimuat turun sekali, disimpan dalam cache pelayar). */
-function getUpscalerModule() {
-  if (!aiModulePromise) {
-    aiModulePromise = import(AI_CDN_SR)
-      .then(mod => mod.default ? mod : (mod.Upscaler ? { default: mod.Upscaler } : mod))
-      .catch(err => {
-        aiModulePromise = null;
-        throw new Error('Model AI gagal dimuat turun (' + (err.message || err) + ')');
-      });
-  }
-  return aiModulePromise;
-}
-
-// Jeda ringkas untuk benarkan UI dilukis. JANGAN guna requestAnimationFrame:
-// ia tidak dijalankan langsung pada tab latar belakang, jadi proses akan tersekat.
-const nextFrame = () => new Promise(r => setTimeout(r, 16));
-
-// diagnostik ringkas (?debug=1): rakam langkah ke window.__dbg
-const DBG = new URLSearchParams(location.search).has('debug');
-const dbg = (...a) => { if (DBG) (window.__dbg ||= []).push(a.join(' ')); };
-
-function dataUrlToBlob(url) {
-  const comma = url.indexOf(',');
-  const header = url.slice(0, comma);
-  const mime = (header.match(/:(.*?);/) || [, 'image/png'])[1];
-  const bin = atob(url.slice(comma + 1));
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
-}
-
-function imageFromUrl(url) {
-  // createImageBitmap jauh lebih stabil daripada <img>.decode() untuk data URL
-  return createImageBitmap(dataUrlToBlob(url));
-}
-
-/** Naik taraf satu imej dengan model AI (jubin + jahitan). */
-async function upscaleItemAI(item) {
-  try {
-    if (item.cancelled) return;
-    const bmp = item.bmp || await loadBitmap(item.file);
-    if (item.cancelled) return;
-    const mp = (bmp.width * bmp.height) / 1e6;
-    if (mp > AI_MAX_MP) {
-      throw new Error(`AI is limited to ${AI_MAX_MP} MP (this image is ${mp.toFixed(1)} MP) — use Lanczos`);
-    }
-    const outW = bmp.width * 2;
-    const outH = bmp.height * 2;
-    if (outW > MAX_SIDE || outH > MAX_SIDE || (outW * outH) / 1e6 > MAX_OUTPUT_MP) {
-      throw new Error(`Output too large (${outW}×${outH}). Limit is ${MAX_OUTPUT_MP} MP and ${MAX_SIDE}px a side.`);
-    }
-
-    item.statusText = 'Loading AI model…';
-    renderRow(item);
-    dbg('getUpscaler start');
-    const mod = await getUpscalerModule();
-    dbg('getUpscaler ok', typeof mod.default);
-
-    const src = document.createElement('canvas');
-    src.width = bmp.width;
-    src.height = bmp.height;
-    src.getContext('2d').drawImage(bmp, 0, 0);
-
-    const hasAlpha = hasTransparency(src);
-    const out = await aiUpscaleCanvas(src, mod, (done, total) => {
-      item.statusText = `AI: tile ${done}/${total}…`;
-      renderRow(item);
-    }, () => item.cancelled);
-
-    if (hasAlpha) {
-      // kekalkan ketelusan: alpha di-resample dengan pica
-      const alpha = document.createElement('canvas');
-      alpha.width = out.width;
-      alpha.height = out.height;
-      await pica.resize(src, alpha);
-      const ctx = out.getContext('2d');
-      ctx.globalCompositeOperation = 'destination-in';
-      ctx.drawImage(alpha, 0, 0);
-      ctx.globalCompositeOperation = 'source-over';
-    }
-
-    item.blob = hasAlpha
-      ? await canvasToBlob(out, 'image/png')
-      : await canvasToBlob(out, 'image/jpeg', 0.92);
-    item.scale = 2;
-    item.engineTag = 'ai';
-    item.w = out.width;
-    item.h = out.height;
-    item.status = 'done';
-  } catch (err) {
-    if (err.message === 'Cancelled' || item.cancelled) return;
-    item.status = 'error';
-    item.error = err.message || 'Failed';
-  }
-  renderRow(item);
-}
-
-/**
- * Jubin berlapis: setiap jubin di-uperes 2×, bahagian tengahnya dicantum
- * supaya tiada garis sambungan pada sempadan.
- *
- * Nota penting: instans Upscaler dibuat baharu untuk setiap jubin. Menggunakan
- * satu instans berulang kali menyebabkan panggilan kedua tersekat pada sesetengah
- * pemacu GPU (Intel/D3D11). Mencipta + dispose setiap kali mengambil ~0.2s kerana
- * pemberat model sudah dicache.
- */
-async function aiUpscaleCanvas(src, mod, onProgress, shouldStop = () => false) {
-  const Upscaler = mod.default;
-  const W = src.width, H = src.height, S = 2;
-  const STEP = AI_TILE - AI_OVERLAP;
-  const cols = Math.max(1, Math.ceil((W - AI_TILE) / STEP) + 1);
-  const rows = Math.max(1, Math.ceil((H - AI_TILE) / STEP) + 1);
-  const pw = (cols - 1) * STEP + AI_TILE;
-  const ph = (rows - 1) * STEP + AI_TILE;
-
-  const padded = document.createElement('canvas');
-  padded.width = pw;
-  padded.height = ph;
-  const pctx = padded.getContext('2d');
-  pctx.drawImage(src, 0, 0);
-  // Sambung piksel tepi ke kawasan tambahan. Tanpa ini model nampak ruang
-  // lutsinar di luar imej dan menghasilkan bingkai gelap pada sempadan.
-  if (pw > W) pctx.drawImage(src, W - 1, 0, 1, H, W, 0, pw - W, H);
-  if (ph > H) pctx.drawImage(src, 0, H - 1, W, 1, 0, H, W, ph - H);
-  if (pw > W && ph > H) pctx.drawImage(src, W - 1, H - 1, 1, 1, W, H, pw - W, ph - H);
-
-  const out = document.createElement('canvas');
-  out.width = W * S;
-  out.height = H * S;
-  const octx = out.getContext('2d');
-
-  const half = AI_OVERLAP / 2;
-  const total = cols * rows;
-  let done = 0;
-  onProgress(0, total);
-
-  for (let ty = 0; ty < rows; ty++) {
-    for (let tx = 0; tx < cols; tx++) {
-      if (shouldStop()) throw new Error('Cancelled');
-      const x0 = tx * STEP;
-      const y0 = ty * STEP;
-
-      const tile = document.createElement('canvas');
-      tile.width = AI_TILE;
-      tile.height = AI_TILE;
-      tile.getContext('2d').drawImage(padded, x0, y0, AI_TILE, AI_TILE, 0, 0, AI_TILE, AI_TILE);
-      dbg('tile', tx, ty, 'drawn', performance.now().toFixed(0));
-
-      const upscaler = new Upscaler();
-      let dataUrl;
-      try {
-        await upscaler.warmup?.();
-        dataUrl = await upscaler.upscale(tile);
-      } finally {
-        try { upscaler.dispose?.(); } catch { /* abaikan */ }
-      }
-      dbg('tile', tx, ty, 'upscaled', performance.now().toFixed(0));
-
-      const img = await imageFromUrl(dataUrl);
-      dbg('tile', tx, ty, 'decoded');
-      const ratio = img.width / AI_TILE;
-
-      const sX = x0 + (x0 === 0 ? 0 : half);
-      const sY = y0 + (y0 === 0 ? 0 : half);
-      const eX = Math.min(x0 + AI_TILE - (x0 + AI_TILE >= pw ? 0 : half), W);
-      const eY = Math.min(y0 + AI_TILE - (y0 + AI_TILE >= ph ? 0 : half), H);
-
-      if (eX > sX && eY > sY) {
-        octx.drawImage(
-          img,
-          (sX - x0) * ratio, (sY - y0) * ratio, (eX - sX) * ratio, (eY - sY) * ratio,
-          sX * S, sY * S, (eX - sX) * S, (eY - sY) * S,
-        );
-      }
-      img.close?.();
-
-      done++;
-      onProgress(done, total);
-      await nextFrame();
-    }
-  }
-  // Model memberi artifak pada piksel pinggir jubin pertama. Salin 2px
-  // dari dalam ke tepi supaya tiada bingkai gelap pada imej akhir.
-  const edge = 2;
-  if (out.width > edge * 2 && out.height > edge * 2) {
-    octx.drawImage(out, edge, 0, 1, out.height, 0, 0, edge, out.height);
-    octx.drawImage(out, out.width - edge - 1, 0, 1, out.height, out.width - edge, 0, edge, out.height);
-    octx.drawImage(out, 0, edge, out.width, 1, 0, 0, out.width, edge);
-    octx.drawImage(out, 0, out.height - edge - 1, out.width, 1, 0, out.height - edge, out.width, edge);
-  }
-  return out;
-}
-
-btnUpscale.addEventListener('click', async () => {
-  const pending = queue.filter(i => (i.status === 'queued' || i.status === 'error') && i.bmp);
-  if (!pending.length) return;
-  const token = ++runToken;
-  btnUpscale.disabled = true;
-  btnUpscale.textContent = 'Processing…';
-  for (const item of pending) {
-    if (token !== runToken) break;
-    item.cancelled = false;
-    item.status = 'queued';
-    await upscaleItem(item);
-  }
-  if (token === runToken) {
-    btnUpscale.disabled = false;
-    btnUpscale.textContent = 'Upscale';
-  }
-});
-
-$('#btnClearUpscale').addEventListener('click', () => {
-  runToken++;                       // hentikan gelung AI yang sedang berjalan
-  queue.forEach(i => { i.cancelled = true; });
-  queue.length = 0;
-  resultsEl.innerHTML = '';
-  controlsU.hidden = true;
-  btnUpscale.disabled = false;
-  btnUpscale.textContent = 'Upscale';
-});
-
-wireDropzone($('#dzUpscale'), inputUpscale, addFiles);
-
-/* ------------------------------------------------------------------ */
-/*  Alat 2 — Buang latar                                              */
-/* ------------------------------------------------------------------ */
-
-const dzBg = $('#dzBg');
-const inputBg = $('#inputBg');
-const bgControls = $('#bgControls');
-const bgStage = $('#bgStage');
-const bgPreview = $('#bgPreview');
-let bgPreviewUrl = null;
-
-/** Tunjuk imej dalam kotak semak (img, bukan canvas — lebih tepat & ringan). */
-function setPreview(source) {
-  if (bgPreviewUrl) URL.revokeObjectURL(bgPreviewUrl);
-  bgPreviewUrl = URL.createObjectURL(source);
-  bgPreview.src = bgPreviewUrl;
-  bgPreview.hidden = false;
-}
-const bgMeta = $('#bgMeta');
-const bgProgress = $('#bgProgress');
-const bgBar = $('#bgBar');
-const bgStatus = $('#bgStatus');
-const btnBgDownload = $('#btnBgDownload');
-const btnBg = $('#btnBg');
-
-let bgFile = null;
-let bgResult = null;
-let bgMode = 'ai';
-let tolerance = 24;
-let aiModule = null;
-
-$$('#modeSeg .seg').forEach(b => b.addEventListener('click', () => {
-  $$('#modeSeg .seg').forEach(x => x.classList.toggle('is-active', x === b));
-  bgMode = b.dataset.mode;
-  $('#tolWrap').hidden = bgMode !== 'fast';
-  $('#bgHint').hidden = bgMode !== 'ai';
-}));
-
-$('#tolerance').addEventListener('input', e => {
-  tolerance = Number(e.target.value);
-  $('#tolVal').textContent = tolerance;
-  syncRangeFill(e.target);
-});
-
-async function loadBgFile(files) {
-  bgFile = files[0];
-  bgResult = null;
-  bgControls.hidden = false;
-  bgStage.hidden = false;
-  btnBgDownload.hidden = true;
-  bgProgress.hidden = true;
-  $('#bgHint').hidden = bgMode !== 'ai';
-
-  const bmp = await loadBitmap(bgFile);
-  setPreview(bgFile);
-  bgMeta.textContent = `${bgFile.name} · ${bmp.width}×${bmp.height} · ${fmtBytes(bgFile.size)}`;
-}
-
-wireDropzone(dzBg, inputBg, loadBgFile);
-
-$('#btnClearBg').addEventListener('click', () => {
-  bgFile = null;
-  bgResult = null;
-  bgControls.hidden = true;
-  bgStage.hidden = true;
-  if (bgPreviewUrl) { URL.revokeObjectURL(bgPreviewUrl); bgPreviewUrl = null; }
-  bgPreview.removeAttribute('src');
-  bgPreview.hidden = true;
-});
-
-function setProgress(pct, text) {
-  bgProgress.hidden = false;
-  bgBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-  if (text) bgStatus.textContent = text;
-}
-
-btnBg.addEventListener('click', async () => {
-  if (!bgFile) return;
-  btnBg.disabled = true;
-  btnBgDownload.hidden = true;
-  const t0 = performance.now();
-  try {
-    const blob = bgMode === 'ai'
-      ? await removeWithAI(bgFile)
-      : await removeByColor(bgFile);
-    bgResult = blob;
-    await drawResult(blob);
-    setProgress(100, `Done in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
-    btnBgDownload.hidden = false;
-  } catch (err) {
-    console.error(err);
-    setProgress(0, `Failed: ${err.message || err}`);
+    if (token === state.token) failJob(err);
   } finally {
-    btnBg.disabled = false;
+    endJob(token);
   }
-});
-
-async function drawResult(blob) {
-  const bmp = await loadBitmap(blob);
-  setPreview(blob);
-  bgMeta.textContent = `${bmp.width}×${bmp.height} · PNG · ${fmtBytes(blob.size)}`;
 }
 
-btnBgDownload.addEventListener('click', () => {
-  if (bgResult) download(bgResult, `${baseName(bgFile.name)}_no-bg.png`);
-});
+/* ------------------------------------------------------------------ */
+/*  Background removal — AI model first, colour flood fill as fallback */
+/* ------------------------------------------------------------------ */
 
-/* --- mod AI (model segmentasi, jalan dalam browser) --- */
+let worker = null;
 
-let aiWorker = null;
-
-function runInWorker(file, onMessage) {
+function runInWorker(file, onProgress) {
   return new Promise((resolve, reject) => {
-    let worker;
-    try {
-      if (!aiWorker) aiWorker = new Worker('./assets/bg-worker.js', { type: 'module' });
-      worker = aiWorker;
-    } catch {
-      reject(new Error('Worker tidak disokong'));
-      return;
+    if (!worker) {
+      try {
+        worker = new Worker('./assets/bg-worker.js', { type: 'module' });
+      } catch (err) {
+        reject(err);
+        return;
+      }
     }
-    const onMsg = event => {
+    const w = worker;
+
+    const onMessage = event => {
       const data = event.data || {};
-      if (data.type === 'progress') onMessage(data);
-      else if (data.type === 'status') onMessage(data);
+      if (data.type === 'progress' || data.type === 'status') onProgress(data);
       else if (data.type === 'done') { cleanup(); resolve(data.blob); }
-      else if (data.type === 'error') { cleanup(); reject(new Error(data.message)); }
+      else if (data.type === 'error') { cleanup(); reject(new Error(data.message || 'Background removal failed')); }
     };
-    const onErr = event => {
+    const onError = event => {
       cleanup();
-      aiWorker = null;
-      reject(new Error(event.message || 'Worker gagal dimulakan'));
+      try { w.terminate(); } catch { /* already gone */ }
+      if (worker === w) worker = null;
+      reject(new Error(event.message || 'The worker could not start'));
     };
     function cleanup() {
-      worker.removeEventListener('message', onMsg);
-      worker.removeEventListener('error', onErr);
+      w.removeEventListener('message', onMessage);
+      w.removeEventListener('error', onError);
     }
-    worker.addEventListener('message', onMsg);
-    worker.addEventListener('error', onErr);
-    worker.postMessage({ file, cdn: AI_CDN });
+
+    w.addEventListener('message', onMessage);
+    w.addEventListener('error', onError);
+    w.postMessage({ file, cdn: BG_CDN });
   });
 }
 
-const mapAiProgress = data => {
-  if (data.type === 'status') return setProgress(8, data.text);
+function mapProgress(data) {
+  if (data.type === 'status') return setProgress(6, data.text);
   const pct = data.total ? (data.current / data.total) * 100 : 0;
-  if (String(data.key).startsWith('fetch')) {
-    setProgress(8 + pct * 0.5, `Downloading model ${Math.round(pct)}%`);
-  } else {
-    setProgress(60 + pct * 0.38, 'Processing image…');
-  }
-};
+  if (String(data.key).startsWith('fetch')) setProgress(6 + pct * 0.5, `Downloading model ${Math.round(pct)}%`);
+  else setProgress(58 + pct * 0.4, 'Cutting out the subject…');
+}
 
 async function removeWithAI(file) {
   setProgress(4, 'Preparing…');
-  // Cuba dalam worker dahulu; jika gagal, jalankan di thread utama.
   try {
-    return await runInWorker(file, mapAiProgress);
+    return await runInWorker(file, mapProgress);
   } catch (err) {
-    console.warn('Worker AI gagal, guna thread utama:', err);
+    // Worker unavailable (old browser, blocked module import): same model on the main thread.
+    console.warn('Worker failed, running on the main thread:', err);
     setProgress(10, 'Loading model…');
-    if (!aiModule) aiModule = await import(AI_CDN);
-    return aiModule.removeBackground(file, {
+    const mod = await import(BG_CDN);
+    return mod.removeBackground(file, {
       model: 'isnet_fp16',
       output: { format: 'image/png' },
-      progress: (key, current, total) => mapAiProgress({ type: 'progress', key, current, total }),
+      progress: (key, current, total) => mapProgress({ type: 'progress', key, current, total }),
     });
   }
 }
 
-/* --- mod warna: flood fill dari tepi --- */
+async function removeByColor(source) {
+  setProgress(35, 'Analysing the background…');
+  const w = source.width;
+  const h = source.height;
 
-async function removeByColor(file) {
-  setProgress(35, 'Analysing background…');
-  const bmp = await loadBitmap(file);
-  const w = bmp.width;
-  const h = bmp.height;
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(bmp, 0, 0);
-  const img = ctx.getImageData(0, 0, w, h);
-  const d = img.data;
+  ctx.drawImage(source, 0, 0);
+  const image = ctx.getImageData(0, 0, w, h);
+  const d = image.data;
 
-  // warna latar = purata piksel sempadan
+  // Background colour = average of the border pixels.
   let sr = 0, sg = 0, sb = 0, n = 0;
   const sample = (x, y) => {
     const i = (y * w + x) * 4;
@@ -790,16 +462,19 @@ async function removeByColor(file) {
   const step = Math.max(1, Math.floor(Math.min(w, h) / 60));
   for (let x = 0; x < w; x += step) { sample(x, 0); sample(x, h - 1); }
   for (let y = 0; y < h; y += step) { sample(0, y); sample(w - 1, y); }
-  const br = sr / n, bgc = sg / n, bb = sb / n;
 
-  const tol2 = tolerance * tolerance * 3;
-  const mask = new Uint8Array(w * h);      // 1 = background
+  const br = n ? sr / n : 255;
+  const bg = n ? sg / n : 255;
+  const bb = n ? sb / n : 255;
+
+  const tol2 = COLOUR_TOLERANCE * COLOUR_TOLERANCE * 3;
+  const mask = new Uint8Array(w * h);   // 1 = background
   const stack = [];
   const push = (x, y) => {
     const p = y * w + x;
     if (mask[p]) return;
     const i = p * 4;
-    const dr = d[i] - br, dg = d[i + 1] - bgc, db = d[i + 2] - bb;
+    const dr = d[i] - br, dg = d[i + 1] - bg, db = d[i + 2] - bb;
     if (dr * dr + dg * dg + db * db > tol2) return;
     mask[p] = 1;
     stack.push(p);
@@ -808,58 +483,166 @@ async function removeByColor(file) {
   for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
   while (stack.length) {
     const p = stack.pop();
-    const x = p % w, y = (p - x) / w;
+    const x = p % w;
+    const y = (p - x) / w;
     if (x > 0) push(x - 1, y);
     if (x < w - 1) push(x + 1, y);
     if (y > 0) push(x, y - 1);
     if (y < h - 1) push(x, y + 1);
   }
 
-  setProgress(70, 'Melembutkan tepi…');
+  setProgress(70, 'Softening the edges…');
 
-  // alpha = 0 pada latar, dengan blur ringan untuk tepi
+  // alpha = 0 on the background, blurred by one pass for a clean edge
   const alpha = new Float32Array(w * h);
   for (let p = 0; p < w * h; p++) alpha[p] = mask[p] ? 0 : 1;
   const tmp = new Float32Array(w * h);
-  const blur = (srcA, dstA) => {
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let sum = 0, cnt = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          const yy = y + dy;
-          if (yy < 0 || yy >= h) continue;
-          for (let dx = -1; dx <= 1; dx++) {
-            const xx = x + dx;
-            if (xx < 0 || xx >= w) continue;
-            sum += srcA[yy * w + xx]; cnt++;
-          }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0, cnt = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          sum += alpha[yy * w + xx];
+          cnt++;
         }
-        dstA[y * w + x] = sum / cnt;
       }
+      tmp[y * w + x] = sum / cnt;
     }
-  };
-  blur(alpha, tmp);
+  }
 
   for (let p = 0; p < w * h; p++) d[p * 4 + 3] = Math.round(tmp[p] * 255);
-  ctx.putImageData(img, 0, 0);
-  setProgress(92, 'Mengekod PNG…');
+  ctx.putImageData(image, 0, 0);
+
+  setProgress(92, 'Encoding PNG…');
   return canvasToBlob(canvas, 'image/png');
 }
 
-// isi trek slider pada muatan pertama
-['#sharpen', '#tolerance'].forEach(sel => { const el = $(sel); if (el) syncRangeFill(el); });
+async function cutout() {
+  if (!state.file || state.busy) return;
+  const token = startJob('Removing the background');
 
-/* butang bulat + tampal papan klip */
-wireSourceButtons(inputUpscale, $('#pickUpscale'), $('#pasteUpscale'), addFiles);
-wireSourceButtons(inputBg, $('#pickBg'), $('#pasteBg'), loadBgFile);
+  try {
+    let blob;
+    try {
+      blob = await removeWithAI(state.file);
+    } catch (err) {
+      if (token !== state.token) return;
+      console.warn('AI cut-out unavailable:', err);
+      setProgress(20, 'AI model unavailable — cutting by background colour instead…');
+      blob = await removeByColor(state.source);
+    }
+    if (token !== state.token) return;
+
+    setProgress(100, 'Background removed');
+    await showResult(blob, 'no-bg', 'Background removed');
+  } catch (err) {
+    if (token === state.token) failJob(err);
+  } finally {
+    endJob(token);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Wiring                                                             */
+/* ------------------------------------------------------------------ */
+
+els.btnUpscale.addEventListener('click', upscale);
+els.btnBg.addEventListener('click', cutout);
+els.btnReset.addEventListener('click', reset);
+
+els.btnDownload.addEventListener('click', () => {
+  const r = state.result;
+  if (!r) return;
+  const ext = r.blob.type === 'image/png' ? 'png' : 'jpg';
+  download(r.blob, `${baseName(state.file?.name)}_${r.tag}.${ext}`);
+});
+
+els.segs.forEach(btn => btn.addEventListener('click', () => {
+  state.scale = Number(btn.dataset.scale) || 2;
+  els.segs.forEach(b => {
+    const on = b === btn;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  syncHint();
+}));
+
+els.fileInput.addEventListener('change', () => {
+  const file = els.fileInput.files?.[0];
+  els.fileInput.value = '';
+  if (file) loadFile(file);
+});
+
+function openPicker() {
+  if (!state.busy) els.fileInput.click();
+}
+
+els.dropzone.addEventListener('click', e => {
+  if (e.target === els.fileInput) return;
+  openPicker();
+});
+els.dropzone.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    openPicker();
+  }
+});
+
+// Whole page is a drop target: no "drop it on the small box" guessing.
+let dragDepth = 0;
+
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+
+window.addEventListener('dragenter', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  els.studio.classList.add('is-drag');
+  els.dropOverlay.hidden = !state.file;
+});
+
+window.addEventListener('dragover', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+
+window.addEventListener('dragleave', e => {
+  if (!hasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) {
+    els.studio.classList.remove('is-drag');
+    els.dropOverlay.hidden = true;
+  }
+});
+
+window.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  els.studio.classList.remove('is-drag');
+  els.dropOverlay.hidden = true;
+
+  const files = [...(e.dataTransfer?.files || [])];
+  const image = files.find(f => f.type.startsWith('image/'));
+  if (!image) { toast('Drop an image file — JPG, PNG or WebP.'); return; }
+  if (files.length > 1) toast('Using the first image.');
+  loadFile(image);
+});
 
 document.addEventListener('paste', e => {
-  const items = [...(e.clipboardData?.items || [])];
-  const file = items.find(i => i.type.startsWith('image/'))?.getAsFile();
+  const file = [...(e.clipboardData?.items || [])]
+    .find(i => i.type.startsWith('image/'))
+    ?.getAsFile();
   if (!file) return;
   e.preventDefault();
-  const active = $('.tool-panel.is-active');
-  if (active?.id === 'panel-bg') loadBgFile([file]);
-  else addFiles([file]);
-  toast('Image pasted from clipboard.');
+  loadFile(file);
+  toast('Image pasted from the clipboard.');
 });
+
+// Hint line reflects the current scale choice.
+syncHint();

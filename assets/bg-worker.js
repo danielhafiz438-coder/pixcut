@@ -7,7 +7,7 @@ self.onmessage = async (e) => {
   const { file, cdn } = e.data || {};
   try {
     if (!engine) {
-      self.postMessage({ type: 'status', text: 'Memuatkan enjin AI…' });
+      self.postMessage({ type: 'status', text: 'Loading the AI engine…' });
       engine = await import(cdn);
     }
     const blob = await engine.removeBackground(file, {

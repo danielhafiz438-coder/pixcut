@@ -1,24 +1,37 @@
 # PixCut
 
-Two image tools on one page, with every byte of processing happening **in the visitor's browser** —
-no uploads, no accounts, no analytics.
+One screen: **drop an image → press Upscale or Remove background → Download.** Every byte of
+processing happens in the visitor's browser — no uploads, no accounts, no analytics.
 
 **Live:** https://danielhafiz438-coder.github.io/pixcut/
 
-- **Upscale** — two engines:
-  - **Lanczos** (pica): 2× / 4× resample + unsharp mask. Instant.
-  - **AI super-res** (ESRGAN via UpscalerJS): adds real detail at 2×, processed in 256 px
-    tiles with 32 px overlap so memory stays bounded and seams disappear.
-- **Remove background** — two modes:
-  - **AI**: ISNet segmentation model (`@imgly/background-removal`) on WebAssembly/ONNX Runtime.
-  - **Colour**: flood fill from the edges for flat or studio backdrops. Instant, no download.
+## The flow
+
+1. Drop an image anywhere on the page (or click the drop zone, or press <kbd>Ctrl</kbd>+<kbd>V</kbd>).
+2. The original shows up as a preview, with its pixel size and file size.
+3. Press **Upscale** (2× or 4×) or **Remove background**.
+4. The result appears next to the original, over a transparency checkerboard.
+5. Press **Download** — the file name carries the operation, e.g. `photo_2x.jpg` or `photo_no-bg.png`.
+6. **Start over** clears everything; dropping another image replaces the current one.
+
+There are no option panels: the only choice left is 2× / 4×. Sharpening, encoding and the
+cut-out mode are picked automatically.
+
+## What each action does
+
+- **Upscale** — Lanczos resampling with an unsharp mask (pica), 2× or 4×. Instant, no model
+  download. PNG out when the source has transparency, JPEG (q 0.92) otherwise.
+- **Remove background** — ISNet segmentation (`@imgly/background-removal`) inside a module
+  worker so the UI stays responsive; the ~40 MB model is downloaded once and cached by the
+  browser. If the model cannot load (offline, blocked CDN), it falls back automatically to a
+  flood-fill cut-out based on the background colour, so the button always produces something.
 
 ## Structure
 
 ```
-index.html            Liquid-glass UI: floating glass bar, centred hero, glass cards
-assets/style.css      Material, layout, responsive rules
-assets/app.js         Upscale + background removal logic, clipboard paste, toasts
+index.html            One-screen studio: drop zone, before/after previews, toolbar
+assets/style.css      Liquid-glass material, layout, responsive rules
+assets/app.js         Decoding, previews, upscaling, background removal, drag & drop, paste
 assets/bg-worker.js   Module worker for the segmentation model
 assets/pica.min.mjs   Pica 10.0.3 (MIT), vendored so no CDN is needed
 server.mjs            Dev-only static server
@@ -43,17 +56,15 @@ Static hosting, no build step.
 **Netlify** — `netlify.toml` already sets `publish = "."`; import the repo or run
 `npx netlify deploy --prod --dir=.`.
 
-## Technical notes
+## Limits
 
-- Upscale limits: 48 MP input (Lanczos), 12 MP input (AI — about 1–1.5 min per MP).
-- Output limit: 192 MP, and 16384 px on the long side. 2× of a 48 MP photo fits; 4× of one does not.
-- AI engine: ESRGAN 2× model (~1 MB) from a CDN, cached after the first run. Expect roughly
-  60–90 s per 1 MP on a mid-range laptop. A 12 MP photo can take 10–20 minutes; the row shows tile progress.
-- AI mode does not offer 4× directly; run it twice or use Lanczos 4×.
-- Background removal downloads a ~40 MB segmentation model on first use, then the browser caches it.
-- Output: PNG when the image has transparency, JPEG 0.92 otherwise.
+- Input: 48 MP per image (memory, not patience).
+- Output: 192 MP and 16384 px on the longest side — 2× of a 48 MP photo fits, 4× does not.
+  The hint under the toolbar shows the exact output size, and Upscale is disabled when the
+  chosen factor would exceed the cap.
+- Background removal keeps the original resolution.
 
 ## Licence
 
-Code: MIT. Pica: MIT. UpscalerJS + default model: MIT. ISNet (via `@imgly/background-removal`):
-AGPL-3.0 — review that licence before using this commercially.
+Code: MIT. Pica: MIT. ISNet (via `@imgly/background-removal`): AGPL-3.0 — review that licence
+before using this commercially.

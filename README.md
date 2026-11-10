@@ -78,7 +78,8 @@ Static hosting, no build step.
 
 - Liquid-glass surfaces over an aurora backdrop, one accent colour, system font stack — no
   webfont to download.
-- Light and dark themes follow `prefers-color-scheme`; every text pair clears WCAG AA
+- **Light is the default.** The sun/moon button in the header switches to dark and remembers the
+  choice in `localStorage` (`data-theme` on `<html>`, no flash on load). Every text pair clears WCAG AA
   (body 16.5:1 light / 17.5:1 dark, muted labels 6.4:1 / 7.5:1, links 6.8:1 / 11.5:1).
 - One primary action per state: before a result it is Upscale, afterwards it is the
   Download button in the result header (Upscale steps back to a secondary style).

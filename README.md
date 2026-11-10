@@ -31,7 +31,8 @@ Sharpening, encoding and the cut-out mode are picked automatically.
   overlap. It rebuilds edges and fine texture instead of interpolating, so it looks sharper and
   more natural than resampling on photos. Slower: measured about 18 s per megapixel in Chrome
   on a laptop GPU (~10 s for a 0.5 MP image), capped at 6 MP — roughly two minutes for the
-  largest allowed photo — with tile progress and a Cancel button. The model is ~1 MB and is
+  largest allowed photo — with tile progress and a Cancel button. Uses ESRGAN Medium
+  (~2.7 MB), chosen after benchmarking the default, slim and thick models at 1:1. The model is ~1 MB and is
   cached by the browser after the first run. PNG out when the source has transparency
   (alpha is resampled separately), otherwise JPEG q 0.94.
 - **Remove background** — ISNet segmentation (`@imgly/background-removal`) inside a module
@@ -79,6 +80,9 @@ Static hosting, no build step.
   Download button in the result header (Upscale steps back to a secondary style).
 - Every control is keyboard reachable with a visible focus ring; the drop zone is a real
   button (`role="button"`, Enter/Space) and progress is announced through `aria-live`.
+- **Compare at 100%** opens the same crop twice — original enlarged by the browser next to
+  the result at 1:1, taken from the busiest part of the image — because a fit-to-screen
+  preview cannot show what upscaling did.
 - Motion is limited to a 300 ms result reveal and is disabled under
   `prefers-reduced-motion`.
 

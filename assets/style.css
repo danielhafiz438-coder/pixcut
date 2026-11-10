@@ -768,6 +768,78 @@ body.has-image .hero-sub { margin-top: 6px; font-size: .9375rem; }
 .shortcuts kbd { margin-left: 4px; }
 
 /* ------------------------------------------------------------------ */
+/*  100% comparison                                                    */
+/* ------------------------------------------------------------------ */
+
+.compare {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: var(--s5);
+  background: color-mix(in srgb, #05070d 62%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.compare-card {
+  width: min(820px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: var(--s5);
+  border-radius: var(--r-lg);
+}
+
+.compare-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.compare-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -.02em;
+}
+
+.compare-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s4);
+  margin-top: var(--s4);
+}
+
+.compare-pane { min-width: 0; }
+
+.compare-pane canvas {
+  display: block;
+  width: 360px;
+  max-width: 100%;
+  height: auto;
+  margin-top: 7px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  image-rendering: pixelated;
+  background-color: color-mix(in srgb, var(--chip) 80%, transparent);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--ink) 7%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--ink) 7%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--ink) 7%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--ink) 7%, transparent) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+body.is-comparing { overflow: hidden; }
+
+@media (max-width: 700px) {
+  .compare-body { grid-template-columns: 1fr; }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Toast                                                              */
 /* ------------------------------------------------------------------ */
 

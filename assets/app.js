@@ -13,6 +13,8 @@ const SHARPEN = 35;           // fixed unsharp strength for the Lanczos path
 const COLOUR_TOLERANCE = 24;  // flood-fill tolerance for the colour fallback
 const BG_CDN = 'https://esm.sh/@imgly/background-removal@1.7.0';
 const AI_CDN_SR = 'https://cdn.jsdelivr.net/npm/upscaler@1.0.0/+esm';
+const AI_MODEL_URL = 'https://esm.sh/@upscalerjs/esrgan-medium@1.0.0/2x';
+const AI_MODEL_PATH = 'https://cdn.jsdelivr.net/npm/@upscalerjs/esrgan-medium@1.0.0/models/x2/model.json';
 const AI_MAX_MP = 6;          // AI enhance is minutes per megapixel, so cap at 6
 const AI_TILE = 256;          // input tile size for the super-resolution model
 const AI_OVERLAP = 32;        // tile overlap so seams disappear
@@ -38,6 +40,12 @@ const els = {
   btnFour: $('#btnFour'),
   btnDownload: $('#btnDownload'),
   downloadLabel: $('#downloadLabel'),
+  btnCompare: $('#btnCompare'),
+  compare: $('#compare'),
+  compareClose: $('#compareClose'),
+  cmpOriginal: $('#cmpOriginal'),
+  cmpResult: $('#cmpResult'),
+  cmpNote: $('#cmpNote'),
   btnUpscale: $('#btnUpscale'),
   btnAi: $('#btnAi'),
   btnBg: $('#btnBg'),
@@ -320,11 +328,13 @@ function updateHint() {
 function clearResult() {
   if (state.result?.url) URL.revokeObjectURL(state.result.url);
   state.result = null;
+  closeCompare();
   els.resultPane.hidden = true;
   els.resultPreview.removeAttribute('src');
   els.btnDownload.hidden = true;
   els.resultLinks.hidden = true;
   els.btnFour.hidden = true;
+  els.btnCompare.hidden = true;
   els.panes.classList.remove('has-result');
   els.studio.classList.remove('has-result');
 }
@@ -441,6 +451,7 @@ async function showResult({ blob, tag, label, seconds }) {
 
   els.linkFull.href = url;
   els.resultLinks.hidden = false;
+  els.btnCompare.hidden = !(img.naturalWidth > state.width);
   els.btnFour.hidden = !(tag === '2x' && !tooBig(outputSize(4)));
 
   els.resultPane.hidden = false;
@@ -520,14 +531,32 @@ const normaliseUpscaler = mod => {
   throw new Error('The AI module loaded in an unexpected shape');
 };
 
+/**
+ * The engine ships a small default model. ESRGAN Medium is ~2.7 MB instead of
+ * ~1 MB, runs at the same speed per tile, and is the one that actually rebuilds
+ * texture — measured against the default, slim and thick variants.
+ */
 function getUpscaler() {
   if (!upscalerPromise) {
-    upscalerPromise = import(AI_CDN_SR)
-      .then(normaliseUpscaler)
-      .catch(() => {
-        upscalerPromise = null;
-        throw new Error('The AI model could not be downloaded — check your connection, or use Upscale 2×.');
-      });
+    upscalerPromise = (async () => {
+      const [core, modelModule] = await Promise.all([
+        import(AI_CDN_SR),
+        import(AI_MODEL_URL).catch(() => null),
+      ]);
+
+      const Upscaler = normaliseUpscaler(core);
+      let model = null;
+
+      if (modelModule?.default) {
+        model = modelModule.default;
+        model.path = AI_MODEL_PATH;
+        if (model._internals) model._internals.path = AI_MODEL_PATH;
+      }
+      return { Upscaler, model };
+    })().catch(() => {
+      upscalerPromise = null;
+      throw new Error('The AI model could not be downloaded — check your connection, or use Upscale 2×.');
+    });
   }
   return upscalerPromise;
 }
@@ -550,7 +579,7 @@ const nextFrame = () => new Promise(r => setTimeout(r, 16));
  * the overlaps hide the seams. A fresh Upscaler per tile avoids a WebGL
  * deadlock seen on some Intel drivers after the first inference.
  */
-async function aiUpscale(src, Upscaler, onProgress, shouldStop) {
+async function aiUpscale(src, Upscaler, model, onProgress, shouldStop) {
   const W = src.width;
   const H = src.height;
   const S = 2;
@@ -591,7 +620,7 @@ async function aiUpscale(src, Upscaler, onProgress, shouldStop) {
       tile.height = AI_TILE;
       tile.getContext('2d').drawImage(padded, x0, y0, AI_TILE, AI_TILE, 0, 0, AI_TILE, AI_TILE);
 
-      const upscaler = new Upscaler();
+      const upscaler = new Upscaler(model ? { model } : undefined);
       let dataUrl;
       try {
         await upscaler.warmup?.();
@@ -654,7 +683,7 @@ async function aiEnhance() {
   const t0 = performance.now();
 
   try {
-    const Upscaler = await getUpscaler();
+    const { Upscaler, model } = await getUpscaler();
     if (token !== state.token) return;
 
     const hasAlpha = hasTransparency(state.source);
@@ -663,6 +692,7 @@ async function aiEnhance() {
     const canvas = await aiUpscale(
       state.source,
       Upscaler,
+      model,
       (done, total) => {
         if (token !== state.token) return;
         setProgress(3 + (done / total) * 92, `AI tile ${done}/${total} · ${((performance.now() - t0) / 1000).toFixed(0)}s`);
@@ -888,6 +918,96 @@ async function cutout() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  100% comparison — the only view where an upscale is visible         */
+/* ------------------------------------------------------------------ */
+
+let compareReturnFocus = null;
+
+/** Pick the busiest window instead of the centre — smooth sky proves nothing. */
+function detailCrop(canvas, cw, ch) {
+  const W = canvas.width;
+  const H = canvas.height;
+  if (W <= cw || H <= ch) return { x: 0, y: 0 };
+  const data = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+
+  let best = { x: Math.round((W - cw) / 2), y: Math.round((H - ch) / 2), score: -1 };
+  const stepX = Math.max(8, Math.floor(cw / 8));
+  const stepY = Math.max(8, Math.floor(ch / 8));
+
+  for (let y = 0; y + ch <= H; y += stepY) {
+    for (let x = 0; x + cw <= W; x += stepX) {
+      let score = 0;
+      for (let yy = y + 4; yy < y + ch - 8; yy += 10) {
+        for (let xx = x + 4; xx < x + cw - 12; xx += 10) {
+          const i = (yy * W + xx) * 4;
+          const right = i + 12;          // 3 px across
+          const down = i + W * 12;       // 3 px down
+          score += Math.abs(data[i] - data[right]) + Math.abs(data[i] - data[down]);
+        }
+      }
+      if (score > best.score) best = { x, y, score };
+    }
+  }
+  return { x: best.x, y: best.y };
+}
+
+function openCompare() {
+  const r = state.result;
+  if (!r || !state.source || !r.w) return;
+
+  const scale = r.w / state.width;
+  const cw = Math.min(360, r.w);
+  const ch = Math.max(1, Math.round(cw * (r.h / r.w)));
+
+  // The result canvas is needed to find the most detailed region.
+  const full = document.createElement('canvas');
+  full.width = r.w;
+  full.height = r.h;
+  full.getContext('2d').drawImage(els.resultPreview, 0, 0);
+  const { x: sx, y: sy } = detailCrop(full, cw, ch);
+
+  const rc = els.cmpResult;
+  rc.width = cw;
+  rc.height = ch;
+  const rctx = rc.getContext('2d');
+  rctx.imageSmoothingEnabled = false;
+  rctx.drawImage(els.resultPreview, sx, sy, cw, ch, 0, 0, cw, ch);
+
+  const oc = els.cmpOriginal;
+  oc.width = cw;
+  oc.height = ch;
+  const octx = oc.getContext('2d');
+  octx.imageSmoothingQuality = 'high';
+  // Same content region, stretched to the result's pixel grid: this is what a
+  // normal image viewer shows when it enlarges the original.
+  octx.drawImage(state.source, sx / scale, sy / scale, cw / scale, ch / scale, 0, 0, cw, ch);
+
+  els.cmpNote.textContent = `${cw}×${ch} px at 1:1 from the busiest part of the image · original `
+    + `${state.width}×${state.height} px · result ${r.w}×${r.h} px (${scale}×)`;
+
+  compareReturnFocus = document.activeElement && document.activeElement !== document.body
+    ? document.activeElement
+    : els.btnCompare;
+  els.compare.hidden = false;
+  document.body.classList.add('is-comparing');
+  els.compareClose.focus();
+}
+
+function closeCompare() {
+  if (els.compare.hidden) return;
+  els.compare.hidden = true;
+  document.body.classList.remove('is-comparing');
+  compareReturnFocus?.focus?.();
+  compareReturnFocus = null;
+}
+
+els.btnCompare.addEventListener('click', openCompare);
+els.compareClose.addEventListener('click', closeCompare);
+els.compare.addEventListener('click', e => {
+  if (e.target === els.compare) closeCompare();
+});
+
+/* ------------------------------------------------------------------ */
 /*  Wiring                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -988,6 +1108,11 @@ document.addEventListener('paste', e => {
 });
 
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !els.compare.hidden) {
+    e.preventDefault();
+    closeCompare();
+    return;
+  }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;

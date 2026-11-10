@@ -1038,6 +1038,31 @@ document.addEventListener('keydown', e => {
   else if (key === 'd' && state.result) { e.preventDefault(); els.btnDownload.click(); }
 });
 
+/* ------------------------------------------------------------------ */
+/*  Theme                                                              */
+/* ------------------------------------------------------------------ */
+
+const themeToggle = $('#themeToggle');
+const themeMeta = document.querySelector('meta[name="theme-color"]');
+
+function applyTheme(theme, persist = true) {
+  const dark = theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  if (themeMeta) themeMeta.setAttribute('content', dark ? '#0b0f17' : '#eef1f8');
+  const label = dark ? 'Switch to light theme' : 'Switch to dark theme';
+  themeToggle.setAttribute('aria-label', label);
+  themeToggle.setAttribute('title', label);
+  if (persist) {
+    try { localStorage.setItem('pixcut-theme', dark ? 'dark' : 'light'); } catch { /* private mode */ }
+  }
+}
+
+themeToggle.addEventListener('click', () => {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+});
+
+applyTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light', false);
+
 /* Mac users get ⌘V instead of Ctrl+V in the paste hint. */
 if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
   const hint = $('#pasteHint');

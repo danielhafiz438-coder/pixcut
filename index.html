@@ -86,6 +86,7 @@
           <p class="meta" id="resultMeta"></p>
           <p class="result-links" id="resultLinks" hidden>
             <a id="linkFull" href="#" target="_blank" rel="noopener">Open full size</a>
+            <button class="linklike" id="btnCompare" type="button" hidden>Compare at 100%</button>
             <button class="linklike" id="btnFour" type="button" hidden>Try 4× instead</button>
           </p>
         </figure>
@@ -138,6 +139,26 @@
   <span class="dot" aria-hidden="true">·</span>
   <a href="https://github.com/danielhafiz438-coder/pixcut" target="_blank" rel="noopener">Open source on GitHub</a>
 </footer>
+
+<div class="compare" id="compare" hidden>
+  <div class="compare-card glass" role="dialog" aria-modal="true" aria-labelledby="compareTitle">
+    <div class="compare-head">
+      <h2 class="compare-title" id="compareTitle">Same crop, same size on screen</h2>
+      <button class="btn-quiet" id="compareClose" type="button">Close</button>
+    </div>
+    <div class="compare-body">
+      <figure class="compare-pane">
+        <figcaption class="pane-label">Original, enlarged by the browser</figcaption>
+        <canvas id="cmpOriginal" width="360" height="240"></canvas>
+      </figure>
+      <figure class="compare-pane">
+        <figcaption class="pane-label" id="cmpResultLabel">PixCut result at 100%</figcaption>
+        <canvas id="cmpResult" width="360" height="240"></canvas>
+      </figure>
+    </div>
+    <p class="hint" id="cmpNote"></p>
+  </div>
+</div>
 
 <noscript><p class="noscript">PixCut needs JavaScript — all processing happens in your browser.</p></noscript>
 

@@ -27,12 +27,14 @@ Sharpening, encoding and the cut-out mode are picked automatically.
 - **Upscale 2×** — Lanczos resampling with an unsharp mask (pica). About a second, no model
   download. It adds pixels and edge contrast; it cannot invent detail that was never captured.
   PNG out when the source has transparency, JPEG (q 0.92) otherwise.
-- **AI enhance** — ESRGAN super-resolution (UpscalerJS, WebGL) in 256 px tiles with 32 px
-  overlap. It rebuilds edges and fine texture instead of interpolating, so it looks sharper and
-  more natural than resampling on photos. Slower: measured about 18 s per megapixel in Chrome
-  on a laptop GPU (~10 s for a 0.5 MP image), capped at 6 MP — roughly two minutes for the
-  largest allowed photo — with tile progress and a Cancel button. Uses ESRGAN Medium
-  (~2.7 MB), chosen after benchmarking the default, slim and thick models at 1:1. The model is ~1 MB and is
+- **AI enhance** — Real-ESRGAN (`realesr-general-x4v3`, BSD-3-Clause) through ONNX Runtime
+  Web, in a module worker so the page stays responsive. WebGPU when the browser has it,
+  WebAssembly otherwise, with one automatic CPU retry if the GPU dies mid-run. The model is
+  fixed at 4×; a 2× result is the 4× output downscaled, which still beats a native 2× model.
+  Measured in Chrome on a laptop GPU: 320×240 → 2× in 3.1 s, → 4× in 3.2 s; 1200×900 → 2×
+  in 37.9 s (≈35 s/MP). Capped at 4 MP for 2× and 1.5 MP for 4×, with tile progress and a
+  Cancel button that takes effect immediately because inference is off the main thread.
+  The 4.7 MB model is committed under `assets/models/` so no third-party host is involved. The model is ~1 MB and is
   cached by the browser after the first run. PNG out when the source has transparency
   (alpha is resampled separately), otherwise JPEG q 0.94.
 - **Remove background** — ISNet segmentation (`@imgly/background-removal`) inside a module
@@ -48,6 +50,8 @@ assets/style.css      Liquid-glass material, layout, responsive rules
 assets/app.js         Decoding, previews, upscaling, background removal, drag & drop, paste
 assets/bg-worker.js   Module worker for the segmentation model
 assets/pica.min.mjs   Pica 10.0.3 (MIT), vendored so no CDN is needed
+assets/ai-worker.js    Real-ESRGAN worker: ONNX Runtime Web, tiled, WebGPU/WASM
+assets/models/        realesr-general-x4v3.onnx (4.7 MB, BSD-3-Clause)
 server.mjs            Dev-only static server
 ```
 
@@ -97,5 +101,8 @@ Static hosting, no build step.
 
 ## Licence
 
-Code: MIT. Pica: MIT. ISNet (via `@imgly/background-removal`): AGPL-3.0 — review that licence
-before using this commercially.
+Code: MIT. Pica: MIT. Real-ESRGAN weights (`realesr-general-x4v3`): BSD-3-Clause — the
+`.onnx` here is a single-file conversion of the official weights (Hugging Face
+`vlad-grig/realesr-general-x4v3-onnx`), not the Qualcomm static-shape export. ONNX Runtime
+Web: MIT. ISNet (via `@imgly/background-removal`): AGPL-3.0 — review that licence before
+using this commercially.

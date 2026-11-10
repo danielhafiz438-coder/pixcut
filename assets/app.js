@@ -12,12 +12,8 @@ const MAX_SIDE = 16384;       // max canvas side on this class of GPU
 const SHARPEN = 35;           // fixed unsharp strength for the Lanczos path
 const COLOUR_TOLERANCE = 24;  // flood-fill tolerance for the colour fallback
 const BG_CDN = 'https://esm.sh/@imgly/background-removal@1.7.0';
-const AI_CDN_SR = 'https://cdn.jsdelivr.net/npm/upscaler@1.0.0/+esm';
-const AI_MODEL_URL = 'https://esm.sh/@upscalerjs/esrgan-medium@1.0.0/2x';
-const AI_MODEL_PATH = 'https://cdn.jsdelivr.net/npm/@upscalerjs/esrgan-medium@1.0.0/models/x2/model.json';
-const AI_MAX_MP = 6;          // AI enhance is minutes per megapixel, so cap at 6
-const AI_TILE = 256;          // input tile size for the super-resolution model
-const AI_OVERLAP = 32;        // tile overlap so seams disappear
+const AI_MAX_MP = 4;          // AI enhance runs a 4x model, so time scales with input
+const AI_4X_MAX_MP = 1.5;     // 4x output is 16 pixels per input pixel; keep it small
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -276,6 +272,10 @@ function cancelJob() {
     try { worker.terminate(); } catch { /* already gone */ }
     worker = null;
   }
+  if (aiWorker) {
+    try { aiWorker.terminate(); } catch { /* already gone */ }
+    aiWorker = null;
+  }
 
   setBusy(false);
   els.btnCancel.hidden = true;
@@ -316,7 +316,7 @@ function updateHint() {
   const out = outputSize(DEFAULT_SCALE);
   const aiNote = (state.width * state.height) / 1e6 > AI_MAX_MP
     ? ` · AI enhance needs ≤ ${AI_MAX_MP} MP`
-    : ' · AI enhance is slower but rebuilds detail instead of blurring';
+    : ' · AI enhance (Real-ESRGAN) is slower but rebuilds detail instead of blurring';
   hint.innerHTML = `Original <b>${state.width}×${state.height}</b> px · Upscale 2× → `
     + `<b>${out.w}×${out.h}</b> px in about a second${aiNote}.`;
 }
@@ -452,7 +452,14 @@ async function showResult({ blob, tag, label, seconds }) {
   els.linkFull.href = url;
   els.resultLinks.hidden = false;
   els.btnCompare.hidden = !(img.naturalWidth > state.width);
-  els.btnFour.hidden = !(tag === '2x' && !tooBig(outputSize(4)));
+
+  const aiResult = tag === 'ai2x';
+  const mp = (state.width * state.height) / 1e6;
+  const canFour = (tag === '2x' || aiResult)
+    && !tooBig(outputSize(4))
+    && (!aiResult || mp <= AI_4X_MAX_MP);
+  els.btnFour.hidden = !canFour;
+  els.btnFour.textContent = aiResult ? 'Try AI 4× instead' : 'Try 4× instead';
 
   els.resultPane.hidden = false;
   els.panes.classList.add('has-result');
@@ -519,195 +526,97 @@ async function upscale(scale = DEFAULT_SCALE) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  AI enhance — ESRGAN super-resolution, tiled                       */
+/*  AI enhance — Real-ESRGAN (realesr-general-x4v3) in a worker        */
 /* ------------------------------------------------------------------ */
 
-let upscalerPromise = null;
-
-const normaliseUpscaler = mod => {
-  if (typeof mod?.default === 'function') return mod.default;
-  if (typeof mod?.Upscaler === 'function') return mod.Upscaler;
-  if (typeof mod?.default?.default === 'function') return mod.default.default;
-  throw new Error('The AI module loaded in an unexpected shape');
-};
+let aiWorker = null;
 
 /**
- * The engine ships a small default model. ESRGAN Medium is ~2.7 MB instead of
- * ~1 MB, runs at the same speed per tile, and is the one that actually rebuilds
- * texture — measured against the default, slim and thick variants.
+ * Run the ONNX worker over a canvas and return RGBA pixels at the requested
+ * scale (2 or 4). The model itself is fixed at 4x; the worker downscales when a
+ * 2x result is asked for, which still beats a native 2x model.
  */
-function getUpscaler() {
-  if (!upscalerPromise) {
-    upscalerPromise = (async () => {
-      const [core, modelModule] = await Promise.all([
-        import(AI_CDN_SR),
-        import(AI_MODEL_URL).catch(() => null),
-      ]);
+function runAIWorker(source, scale, onProgress) {
+  return new Promise((resolve, reject) => {
+    const { width, height } = source;
+    const image = source.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, width, height);
 
-      const Upscaler = normaliseUpscaler(core);
-      let model = null;
-
-      if (modelModule?.default) {
-        model = modelModule.default;
-        model.path = AI_MODEL_PATH;
-        if (model._internals) model._internals.path = AI_MODEL_PATH;
-      }
-      return { Upscaler, model };
-    })().catch(() => {
-      upscalerPromise = null;
-      throw new Error('The AI model could not be downloaded — check your connection, or use Upscale 2×.');
-    });
-  }
-  return upscalerPromise;
-}
-
-const dataUrlToBlob = url => {
-  const comma = url.indexOf(',');
-  const mime = (url.slice(0, comma).match(/:(.*?);/) || [, 'image/png'])[1];
-  const bin = atob(url.slice(comma + 1));
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
-};
-
-const imageFromUrl = url => createImageBitmap(dataUrlToBlob(url));
-
-const nextFrame = () => new Promise(r => setTimeout(r, 16));
-
-/**
- * Tile the source, upscale each tile 2×, and stitch only the tiles' centres so
- * the overlaps hide the seams. A fresh Upscaler per tile avoids a WebGL
- * deadlock seen on some Intel drivers after the first inference.
- */
-async function aiUpscale(src, Upscaler, model, onProgress, shouldStop) {
-  const W = src.width;
-  const H = src.height;
-  const S = 2;
-  const STEP = AI_TILE - AI_OVERLAP;
-  const cols = Math.max(1, Math.ceil((W - AI_TILE) / STEP) + 1);
-  const rows = Math.max(1, Math.ceil((H - AI_TILE) / STEP) + 1);
-  const pw = (cols - 1) * STEP + AI_TILE;
-  const ph = (rows - 1) * STEP + AI_TILE;
-
-  const padded = document.createElement('canvas');
-  padded.width = pw;
-  padded.height = ph;
-  const pctx = padded.getContext('2d');
-  pctx.drawImage(src, 0, 0);
-  // Extend the edge pixels so the model never sees a transparent void.
-  if (pw > W) pctx.drawImage(src, W - 1, 0, 1, H, W, 0, pw - W, H);
-  if (ph > H) pctx.drawImage(src, 0, H - 1, W, 1, 0, H, W, ph - H);
-  if (pw > W && ph > H) pctx.drawImage(src, W - 1, H - 1, 1, 1, W, H, pw - W, ph - H);
-
-  const out = document.createElement('canvas');
-  out.width = W * S;
-  out.height = H * S;
-  const octx = out.getContext('2d');
-
-  const half = AI_OVERLAP / 2;
-  const total = cols * rows;
-  let done = 0;
-  onProgress(0, total);
-
-  for (let ty = 0; ty < rows; ty++) {
-    for (let tx = 0; tx < cols; tx++) {
-      if (shouldStop()) throw new Error('Cancelled');
-      const x0 = tx * STEP;
-      const y0 = ty * STEP;
-
-      const tile = document.createElement('canvas');
-      tile.width = AI_TILE;
-      tile.height = AI_TILE;
-      tile.getContext('2d').drawImage(padded, x0, y0, AI_TILE, AI_TILE, 0, 0, AI_TILE, AI_TILE);
-
-      const upscaler = new Upscaler(model ? { model } : undefined);
-      let dataUrl;
-      try {
-        await upscaler.warmup?.();
-        dataUrl = await upscaler.upscale(tile);
-      } finally {
-        try { upscaler.dispose?.(); } catch { /* already gone */ }
-      }
-
-      const img = await imageFromUrl(dataUrl);
-      const ratio = img.width / AI_TILE;
-
-      const sX = x0 + (x0 === 0 ? 0 : half);
-      const sY = y0 + (y0 === 0 ? 0 : half);
-      const eX = Math.min(x0 + AI_TILE - (x0 + AI_TILE >= pw ? 0 : half), W);
-      const eY = Math.min(y0 + AI_TILE - (y0 + AI_TILE >= ph ? 0 : half), H);
-
-      if (eX > sX && eY > sY) {
-        octx.drawImage(
-          img,
-          (sX - x0) * ratio, (sY - y0) * ratio, (eX - sX) * ratio, (eY - sY) * ratio,
-          sX * S, sY * S, (eX - sX) * S, (eY - sY) * S,
-        );
-      }
-      img.close?.();
-
-      done++;
-      onProgress(done, total);
-      await nextFrame();
+    let worker;
+    try {
+      worker = new Worker(new URL('./ai-worker.js', import.meta.url), { type: 'module' });
+    } catch (err) {
+      reject(err);
+      return;
     }
-  }
+    aiWorker = worker;
 
-  // The model smears the outermost pixels; copy a 2px band inward.
-  const edge = 2;
-  if (out.width > edge * 2 && out.height > edge * 2) {
-    octx.drawImage(out, edge, 0, 1, out.height, 0, 0, edge, out.height);
-    octx.drawImage(out, out.width - edge - 1, 0, 1, out.height, out.width - edge, 0, edge, out.height);
-    octx.drawImage(out, 0, edge, out.width, 1, 0, 0, out.width, edge);
-    octx.drawImage(out, 0, out.height - edge - 1, out.width, 1, 0, out.height - edge, out.width, edge);
-  }
-  return out;
+    const finish = () => {
+      worker.terminate();
+      if (aiWorker === worker) aiWorker = null;
+    };
+
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'tile') { onProgress(data.done, data.total, data.backend); return; }
+      if (data.type === 'backend') { onProgress(0, 0, data.backend); return; }
+      finish();
+      if (data.type === 'done') resolve(data);
+      else if (data.type === 'error') reject(new Error(data.message || 'AI enhance failed'));
+    };
+    worker.onerror = event => {
+      finish();
+      reject(new Error(event.message || 'The AI worker could not start'));
+    };
+
+    worker.postMessage({ pixels: image.data.buffer, width, height, scale }, [image.data.buffer]);
+  });
 }
 
-async function aiEnhance() {
+async function aiEnhance(requested = 2) {
   if (!state.file || state.busy) return;
+  const scale = Number(requested) === 4 ? 4 : 2;
 
   const mp = (state.width * state.height) / 1e6;
-  if (mp > AI_MAX_MP) {
-    state.error = `AI enhance is limited to ${AI_MAX_MP} MP (this image is ${mp.toFixed(1)} MP) — use Upscale 2× instead.`;
+  const maxMp = scale === 4 ? AI_4X_MAX_MP : AI_MAX_MP;
+  if (mp > maxMp) {
+    state.error = `AI enhance is limited to ${maxMp} MP at ${scale}× (this image is ${mp.toFixed(1)} MP) — `
+      + (scale === 4 ? 'use AI 2× instead.' : 'use Upscale 2× or a smaller image.');
     updateHint();
     return;
   }
-  const out = outputSize(2);
+  const out = { w: state.width * scale, h: state.height * scale };
   if (tooBig(out)) {
-    state.error = `2× would be ${out.w}×${out.h} px — past the ${MAX_OUTPUT_MP} MP limit.`;
+    state.error = `${scale}× would be ${out.w}×${out.h} px — past the ${MAX_OUTPUT_MP} MP limit.`;
     updateHint();
     return;
   }
 
-  const token = startJob('Loading the AI model');
+  const token = startJob('Loading the Real-ESRGAN model');
   const t0 = performance.now();
 
   try {
-    const { Upscaler, model } = await getUpscaler();
-    if (token !== state.token) return;
-
     const hasAlpha = hasTransparency(state.source);
-    setProgress(4, 'Enhancing — first tile…');
+    setProgress(2, 'Preparing…');
 
-    const canvas = await aiUpscale(
-      state.source,
-      Upscaler,
-      model,
-      (done, total) => {
-        if (token !== state.token) return;
-        setProgress(3 + (done / total) * 92, `AI tile ${done}/${total} · ${((performance.now() - t0) / 1000).toFixed(0)}s`);
-      },
-      () => token !== state.token,
-    );
+    const result = await runAIWorker(state.source, scale, (done, total, backend) => {
+      if (token !== state.token) return;
+      const device = backend === 'webgpu' ? 'GPU' : 'CPU';
+      if (!done) { setProgress(3, `Starting on the ${device}…`); return; }
+      setProgress(3 + (done / total) * 94, `AI tile ${done}/${total} · ${((performance.now() - t0) / 1000).toFixed(0)}s · ${device}`);
+    });
     if (token !== state.token) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = result.width;
+    canvas.height = result.height;
+    const ctx = canvas.getContext('2d');
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(result.pixels), result.width, result.height), 0, 0);
 
     if (hasAlpha) {
-      // The model works on RGB only; bring the alpha back through pica.
+      // The model is RGB only; bring the source alpha back at the new size.
       const alpha = document.createElement('canvas');
       alpha.width = canvas.width;
       alpha.height = canvas.height;
       await pica.resize(state.source, alpha);
-      const ctx = canvas.getContext('2d');
       ctx.globalCompositeOperation = 'destination-in';
       ctx.drawImage(alpha, 0, 0);
       ctx.globalCompositeOperation = 'source-over';
@@ -718,11 +627,11 @@ async function aiEnhance() {
       : await canvasToBlob(canvas, 'image/jpeg', 0.94);
     if (token !== state.token) return;
 
-    setProgress(100, 'AI enhance done');
+    setProgress(100, `AI enhanced ${scale}×`);
     await showResult({
       blob,
-      tag: 'ai2x',
-      label: 'AI enhanced 2×',
+      tag: scale === 4 ? 'ai4x' : 'ai2x',
+      label: `AI enhanced ${scale}× · ${result.backend === 'webgpu' ? 'GPU' : 'CPU'}`,
       seconds: ((performance.now() - t0) / 1000).toFixed(1),
     });
   } catch (err) {
@@ -731,6 +640,7 @@ async function aiEnhance() {
     endJob(token);
   }
 }
+
 
 /* ------------------------------------------------------------------ */
 /*  Background removal — AI model first, colour flood fill as fallback */
@@ -1012,10 +922,13 @@ els.compare.addEventListener('click', e => {
 /* ------------------------------------------------------------------ */
 
 els.btnUpscale.addEventListener('click', () => upscale(DEFAULT_SCALE));
-els.btnAi.addEventListener('click', aiEnhance);
+els.btnAi.addEventListener('click', () => aiEnhance(2));
 els.btnBg.addEventListener('click', cutout);
 els.btnReset.addEventListener('click', reset);
-els.btnFour.addEventListener('click', () => upscale(4));
+els.btnFour.addEventListener('click', () => {
+  if (state.result?.tag === 'ai2x') aiEnhance(4);
+  else upscale(4);
+});
 els.btnCancel.addEventListener('click', cancelJob);
 
 els.btnDownload.addEventListener('click', () => {
